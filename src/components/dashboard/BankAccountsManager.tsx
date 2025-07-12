@@ -1,4 +1,3 @@
-```typescript
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, ArrowRightLeft, Banknote, CreditCard, Wallet, Landmark } from 'lucide-react';
 import Card from '../ui/Card';
@@ -177,7 +176,7 @@ export function BankAccountsManager() {
   };
 
   const handleDeleteAccount = async (account: BankAccount) => {
-    if (!confirm(\`Are you sure you want to delete the account "${account.bank_name || account.bankName}"? This cannot be undone.`)) {
+    if (!confirm(`Are you sure you want to delete the account "${account.bank_name || account.bankName}"? This cannot be undone.`)) {
       return;
     }
 
@@ -311,7 +310,7 @@ export function BankAccountsManager() {
       }
 
       // Record the transfer
-      const transferData: Omit<Transfer, 'id' | 'createdAt' | 'updatedAt' | 'userId'> = {
+      const transferData = {
         from_account_id: transferForm.fromAccountId,
         to_account_id: transferForm.toAccountId || null,
         amount: transferAmount,
@@ -319,11 +318,12 @@ export function BankAccountsManager() {
         type: transferForm.type,
         description: transferForm.description.trim() || null,
         date: transferForm.date,
+        user_id: user?.id,
       };
 
       const { data: savedTransfer, error: transferError } = await supabase
         .from('transfers')
-        .insert([{ ...transferData, user_id: user?.id }])
+        .insert([transferData])
         .select()
         .single();
       if (transferError) throw transferError;
@@ -403,7 +403,7 @@ export function BankAccountsManager() {
       render: (value: string, row: BankAccount) => (
         <div>
           <div>{value || row.accountNumber || 'N/A'}</div>
-          {row.ifsc_code && <div className="text-sm text-gray-500">IFSC: {row.ifsc_code}</div>}
+          {(row.ifsc_code || row.ifscCode) && <div className="text-sm text-gray-500">IFSC: {row.ifsc_code || row.ifscCode}</div>}
         </div>
       ),
     },
@@ -428,7 +428,7 @@ export function BankAccountsManager() {
         if ((row.account_type || row.accountType) === 'Credit Card') {
           return (
             <CurrencyDisplay
-              originalAmount={value}
+              originalAmount={value || row.creditLimit || 0}
               originalCurrency={row.currency}
               showBoth={row.currency !== settings.defaultCurrency}
             />
@@ -467,8 +467,8 @@ export function BankAccountsManager() {
 
   const totalBalance = accounts.reduce((sum, account) => {
     const balance = account.balance ?? 0;
-    const converted = currencyConverter.convertAmount(balance, account.currency, settings.defaultCurrency);
-    return sum + (converted?.convertedAmount ?? balance);
+    // For now, just sum without conversion to avoid async issues in render
+    return sum + balance;
   }, 0);
 
   return (
@@ -638,7 +638,7 @@ export function BankAccountsManager() {
               { value: '', label: 'Select source account' },
               ...accounts.map(acc => ({
                 value: acc.id,
-                label: \`${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
+                label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
               }))
             ]}
             error={errors.fromAccountId}
@@ -651,7 +651,7 @@ export function BankAccountsManager() {
               { value: '', label: 'Select destination account' },
               ...accounts.map(acc => ({
                 value: acc.id,
-                label: \`${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
+                label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
               }))
             ]}
             error={errors.toAccountId}
@@ -711,4 +711,3 @@ export function BankAccountsManager() {
     </div>
   );
 }
-```
