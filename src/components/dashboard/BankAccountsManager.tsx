@@ -1599,29 +1599,45 @@ export default function BankAccountsManager() {
                     id="useManualRate"
                     checked={internationalTransferForm.useManualRate}
                     onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, useManualRate: e.target.checked })}
+                        <div className="flex justify-between">
+                          <span>Base Exchange Rate:</span>
+                          <span className="font-mono">1 {fromAccount.currency} = {exchangeRate.toFixed(2)} {toAccount.currency}</span>
+                        </div>
+                        {internationalForm.exchangeRateMarkup > 0 && (
+                          <>
+                            <div className="flex justify-between text-orange-600">
+                              <span>Rate Markup ({internationalForm.exchangeRateMarkup}%):</span>
+                              <span className="font-mono">+{(exchangeRate * (internationalForm.exchangeRateMarkup / 100)).toFixed(2)} {toAccount.currency}</span>
+                            </div>
+                            <div className="flex justify-between font-medium text-blue-600">
+                              <span>Final Exchange Rate:</span>
+                              <span className="font-mono">1 {fromAccount.currency} = {finalExchangeRate.toFixed(2)} {toAccount.currency}</span>
+                            </div>
+                          </>
+                        )}
                     className="rounded border-gray-300"
                   />
-                  <label htmlFor="useManualRate" className="text-sm font-medium text-gray-700">
+                          <span className="font-mono">{formatCurrency(parseFloat(internationalForm.amount), fromAccount.currency)}</span>
                     Use Manual Exchange Rate
                   </label>
                 </div>
 
-                {internationalTransferForm.useManualRate ? (
+                            <span className="font-mono">-{formatCurrency(internationalForm.flatTransferFee, fromAccount.currency)}</span>
                   <Input
                     label={`Manual Rate (1 ${getSourceAccount()?.currency} = ? ${getDestinationAccount()?.currency})`}
                     type="number"
                     value={internationalTransferForm.manualExchangeRate}
-                    onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, manualExchangeRate: e.target.value })}
+                          <span className="font-mono">{formatCurrency(convertedAmount, toAccount.currency)}</span>
                     placeholder="0.0000"
                     step="0.0001"
                   />
                 ) : (
-                  <div>
+                            <span className="font-mono">{internationalForm.manualSettlementAdjustment > 0 ? '+' : ''}{formatCurrency(internationalForm.manualSettlementAdjustment, toAccount.currency)}</span>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Current Exchange Rate</label>
                     <div className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900">
                       {currentExchangeRate ? (
                         `1 ${getSourceAccount()?.currency} = ${currentExchangeRate.toFixed(4)} ${getDestinationAccount()?.currency}`
-                      ) : (
+                          <span className="font-mono text-green-600">{formatCurrency(finalDestinationAmount, toAccount.currency)}</span>
                         'Calculating...'
                       )}
                     </div>
