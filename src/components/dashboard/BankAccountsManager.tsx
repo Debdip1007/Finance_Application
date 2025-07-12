@@ -1626,7 +1626,9 @@ export default function BankAccountsManager() {
                         `1 ${getSourceAccount()?.currency} = ${currentExchangeRate.toFixed(4)} ${getDestinationAccount()?.currency}`
                       ) : (
                         'Calculating...'
-                      )}
+                      <div className="text-orange-600">Percentage Markup: +{exchangeRateCalc.percentageMarkupAmount.toFixed(2)} {toAccount.currency}</div>
+                      <div className="text-red-600">Flat Markup:      -{exchangeRateCalc.flatMarkup.toFixed(2)} {toAccount.currency}</div>
+                      <div className="text-green-600 font-semibold">Final Rate:       1 {fromAccount.currency} = {exchangeRateCalc.finalRate.toFixed(2)} {toAccount.currency}</div>
                     </div>
                   </div>
                 )}
