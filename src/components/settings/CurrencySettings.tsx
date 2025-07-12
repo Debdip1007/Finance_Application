@@ -124,10 +124,3 @@ export default function CurrencySettings() {
     </div>
   );
 }
-
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
