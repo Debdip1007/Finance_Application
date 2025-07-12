@@ -3,6 +3,7 @@ import { Eye, EyeOff, Wallet } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
+import EmailVerificationNotice from './EmailVerificationNotice';
 
 export default function AuthForm() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -12,6 +13,8 @@ export default function AuthForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showEmailVerification, setShowEmailVerification] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
 
   const { signIn, signUp } = useAuth();
 
@@ -30,8 +33,8 @@ export default function AuthForm() {
         if (error) {
           setError(error.message);
         } else {
-          setError('');
-          alert('Check your email for the confirmation link!');
+          setUserEmail(email);
+          setShowEmailVerification(true);
         }
       } else {
         const { error } = await signIn(email, password);
@@ -45,6 +48,38 @@ export default function AuthForm() {
       setLoading(false);
     }
   };
+
+  const handleResendEmail = async () => {
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: userEmail,
+      });
+      
+      if (error) {
+        setError(error.message);
+      } else {
+        alert('Verification email sent! Please check your inbox.');
+      }
+    } catch (err) {
+      setError('Failed to resend verification email');
+    }
+  };
+
+  if (showEmailVerification) {
+    return (
+      <EmailVerificationNotice 
+        email={userEmail}
+        onResendEmail={handleResendEmail}
+        onBackToSignIn={() => {
+          setShowEmailVerification(false);
+          setIsSignUp(false);
+          setUserEmail('');
+          setError('');
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">

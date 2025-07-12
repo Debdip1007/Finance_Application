@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { User } from '../types';
+import toast from 'react-hot-toast';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -10,7 +11,15 @@ export function useAuth() {
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ? mapSupabaseUser(session.user) : null);
+      const user = session?.user;
+      
+      // Check if user email is verified
+      if (user && !user.email_confirmed_at) {
+        toast.error('Please verify your email address to continue');
+        setUser(null);
+      } else {
+        setUser(user ? mapSupabaseUser(user) : null);
+      }
       setLoading(false);
     });
 
@@ -18,7 +27,15 @@ export function useAuth() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ? mapSupabaseUser(session.user) : null);
+      const user = session?.user;
+      
+      // Check if user email is verified
+      if (user && !user.email_confirmed_at) {
+        toast.error('Please verify your email address to continue');
+        setUser(null);
+      } else {
+        setUser(user ? mapSupabaseUser(user) : null);
+      }
       setLoading(false);
     });
 
@@ -37,6 +54,9 @@ export function useAuth() {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/verify-email`,
+      },
     });
     return { data, error };
   };
