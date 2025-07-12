@@ -76,6 +76,7 @@ export default function BankAccountsManager() {
   const [loading, setLoading] = useState(true);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showInternationalTransferModal, setShowInternationalTransferModal] = useState(false);
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [showArchivedLoans, setShowArchivedLoans] = useState(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
@@ -104,6 +105,21 @@ export default function BankAccountsManager() {
     manualAdjustment: '0',
   });
 
+  const [internationalTransferForm, setInternationalTransferForm] = useState({
+    fromAccountId: '',
+    toAccountId: '',
+    amount: '',
+    description: '',
+    flatTransferFee: '0',
+    exchangeRateMarkup: '0',
+    manualSettlementAdjustment: '0',
+    manualExchangeRate: '',
+    useManualRate: false,
+  });
+
+  const [currentExchangeRate, setCurrentExchangeRate] = useState<number | null>(null);
+  const [calculatedDestinationAmount, setCalculatedDestinationAmount] = useState<number | null>(null);
+
   const [loanForm, setLoanForm] = useState<LoanFormData>({
     lenderName: '',
     loanType: 'Personal',
@@ -122,6 +138,68 @@ export default function BankAccountsManager() {
       loadLoans();
     }
   }, [user]);
+
+  // Calculate exchange rate and destination amount for international transfers
+  useEffect(() => {
+    const calculateInternationalTransfer = async () => {
+      if (!internationalTransferForm.fromAccountId || !internationalTransferForm.toAccountId || !internationalTransferForm.amount) {
+        setCurrentExchangeRate(null);
+        setCalculatedDestinationAmount(null);
+        return;
+      }
+
+      const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+      const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+      const amount = parseFloat(internationalTransferForm.amount);
+
+      if (!fromAccount || !toAccount || isNaN(amount) || fromAccount.currency === toAccount.currency) {
+        setCurrentExchangeRate(null);
+        setCalculatedDestinationAmount(null);
+        return;
+      }
+
+      try {
+        let exchangeRate: number;
+        
+        if (internationalTransferForm.useManualRate && internationalTransferForm.manualExchangeRate) {
+          exchangeRate = parseFloat(internationalTransferForm.manualExchangeRate);
+        } else {
+          const rateFromConverter = await currencyConverter.getExchangeRate(fromAccount.currency, toAccount.currency);
+          exchangeRate = rateFromConverter || 1;
+        }
+
+        // Apply exchange rate markup
+        const markupPercentage = parseFloat(internationalTransferForm.exchangeRateMarkup) || 0;
+        const adjustedRate = exchangeRate * (1 + markupPercentage / 100);
+
+        // Calculate destination amount
+        const flatFee = parseFloat(internationalTransferForm.flatTransferFee) || 0;
+        const amountAfterFees = amount - flatFee;
+        const convertedAmount = amountAfterFees * adjustedRate;
+        const manualAdjustment = parseFloat(internationalTransferForm.manualSettlementAdjustment) || 0;
+        const finalDestinationAmount = convertedAmount + manualAdjustment;
+
+        setCurrentExchangeRate(adjustedRate);
+        setCalculatedDestinationAmount(finalDestinationAmount);
+      } catch (error) {
+        console.error('Error calculating exchange rate:', error);
+        setCurrentExchangeRate(null);
+        setCalculatedDestinationAmount(null);
+      }
+    };
+
+    calculateInternationalTransfer();
+  }, [
+    internationalTransferForm.fromAccountId,
+    internationalTransferForm.toAccountId,
+    internationalTransferForm.amount,
+    internationalTransferForm.flatTransferFee,
+    internationalTransferForm.exchangeRateMarkup,
+    internationalTransferForm.manualSettlementAdjustment,
+    internationalTransferForm.manualExchangeRate,
+    internationalTransferForm.useManualRate,
+    accounts
+  ]);
 
   // Check if transfer involves international accounts
   const isInternationalTransfer = () => {
@@ -732,6 +810,134 @@ export default function BankAccountsManager() {
     }
   };
 
+  const handleInternationalTransfer = async () => {
+    try {
+      const amount = parseFloat(internationalTransferForm.amount);
+      if (isNaN(amount) || amount <= 0) {
+        alert('Please enter a valid amount');
+        return;
+      }
+
+      const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+      const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+
+      if (!fromAccount || !toAccount) {
+        alert('Please select both source and destination accounts');
+        return;
+      }
+
+      if (fromAccount.currency === toAccount.currency) {
+        alert('Both accounts have the same currency. Use regular transfer instead.');
+        return;
+      }
+
+      if (!currentExchangeRate || calculatedDestinationAmount === null) {
+        alert('Unable to calculate exchange rate. Please try again.');
+        return;
+      }
+
+      const flatFee = parseFloat(internationalTransferForm.flatTransferFee) || 0;
+      const manualAdjustment = parseFloat(internationalTransferForm.manualSettlementAdjustment) || 0;
+      const markupPercentage = parseFloat(internationalTransferForm.exchangeRateMarkup) || 0;
+
+      // Update source account (deduct amount + flat fee)
+      const totalDeduction = amount + flatFee;
+      const newFromBalance = fromAccount.balance - totalDeduction;
+      const { error: fromError } = await supabase
+        .from('bank_accounts')
+        .update({ balance: newFromBalance })
+        .eq('id', fromAccount.id)
+        .eq('user_id', user?.id);
+      
+      if (fromError) throw fromError;
+
+      // Update destination account
+      const newToBalance = toAccount.balance + calculatedDestinationAmount;
+      const { error: toError } = await supabase
+        .from('bank_accounts')
+        .update({ balance: newToBalance })
+        .eq('id', toAccount.id)
+        .eq('user_id', user?.id);
+      
+      if (toError) throw toError;
+
+      // Record the transfer with detailed information
+      const { data: transferData, error: transferError } = await supabase
+        .from('transfers')
+        .insert([{
+          from_account_id: fromAccount.id,
+          to_account_id: toAccount.id,
+          amount,
+          currency: fromAccount.currency,
+          type: 'International',
+          description: internationalTransferForm.description || `International transfer from ${fromAccount.currency} to ${toAccount.currency}`,
+          date: new Date().toISOString().split('T')[0],
+          user_id: user?.id,
+        }])
+        .select()
+        .single();
+      
+      if (transferError) throw transferError;
+
+      // Store detailed conversion and fee information
+      await supabase
+        .from('transaction_conversions')
+        .insert([{
+          transaction_id: transferData.id,
+          transaction_type: 'international_transfer',
+          original_amount: amount,
+          original_currency: fromAccount.currency,
+          converted_amount: calculatedDestinationAmount,
+          converted_currency: toAccount.currency,
+          exchange_rate: currentExchangeRate,
+          conversion_date: new Date().toISOString(),
+        }]);
+
+      // Record flat transfer fee as expense if applicable
+      if (flatFee > 0) {
+        await supabase
+          .from('expenses')
+          .insert([{
+            date: new Date().toISOString().split('T')[0],
+            category: 'Transfer Fees',
+            description: `International transfer flat fee`,
+            amount: flatFee,
+            currency: fromAccount.currency,
+            type: 'Need',
+            account_id: fromAccount.id,
+            payment_status: 'Paid',
+            payment_date: new Date().toISOString().split('T')[0],
+            user_id: user?.id,
+          }]);
+      }
+
+      await loadAccounts();
+      setShowInternationalTransferModal(false);
+      resetInternationalTransferForm();
+      
+      alert(`International transfer completed successfully!\n\nTransferred: ${formatCurrency(amount, fromAccount.currency)}\nReceived: ${formatCurrency(calculatedDestinationAmount, toAccount.currency)}\nExchange Rate: 1 ${fromAccount.currency} = ${currentExchangeRate.toFixed(4)} ${toAccount.currency}`);
+    } catch (error) {
+      console.error('Error processing international transfer:', error);
+      alert('Error processing international transfer. Please try again.');
+    }
+  };
+
+  const resetInternationalTransferForm = () => {
+    setInternationalTransferForm({
+      fromAccountId: '',
+      toAccountId: '',
+      amount: '',
+      description: '',
+      flatTransferFee: '0',
+      exchangeRateMarkup: '0',
+      manualSettlementAdjustment: '0',
+      manualExchangeRate: '',
+      useManualRate: false,
+    });
+    setCurrentExchangeRate(null);
+    setCalculatedDestinationAmount(null);
+  };
+
   const resetAccountForm = () => {
     setAccountForm({
       bankName: '',
@@ -987,6 +1193,19 @@ export default function BankAccountsManager() {
 
   const allDebtAccounts = [...debtAccounts, ...loanDebtAccounts];
 
+  // Get accounts with different currencies for international transfers
+  const getInternationalAccounts = () => {
+    return accounts.filter(acc => acc.currency !== 'INR');
+  };
+
+  const getSourceAccount = () => {
+    return accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+  };
+
+  const getDestinationAccount = () => {
+    return accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1005,6 +1224,13 @@ export default function BankAccountsManager() {
             variant="outline"
           >
             Self Transfer
+          </Button>
+          <Button
+            icon={ArrowUpRight}
+            onClick={() => setShowInternationalTransferModal(true)}
+            variant="outline"
+          >
+            International Transfer
           </Button>
           <Button
             icon={CreditCard}
@@ -1278,6 +1504,231 @@ export default function BankAccountsManager() {
           data={archivedLoans}
           loading={loading}
         />
+      </Modal>
+
+      {/* International Transfer Modal */}
+      <Modal
+        isOpen={showInternationalTransferModal}
+        onClose={() => {
+          setShowInternationalTransferModal(false);
+          resetInternationalTransferForm();
+        }}
+        title="International Transfer"
+        size="lg"
+      >
+        <div className="space-y-6">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h4 className="font-medium text-blue-900 mb-2 flex items-center">
+              <span className="mr-2">🌍</span>
+              International Currency Transfer
+            </h4>
+            <p className="text-sm text-blue-700">
+              Transfer funds between accounts with different currencies. All fees and exchange rates will be clearly displayed.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Select
+              label="From Account"
+              value={internationalTransferForm.fromAccountId}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, fromAccountId: e.target.value })}
+              options={[
+                { value: '', label: 'Select source account' },
+                ...accounts.map(acc => ({
+                  value: acc.id,
+                  label: `${acc.bank_name || acc.bankName} (${acc.currency}) - ${formatCurrency(acc.balance, acc.currency)}`
+                }))
+              ]}
+            />
+            
+            <Select
+              label="To Account"
+              value={internationalTransferForm.toAccountId}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, toAccountId: e.target.value })}
+              options={[
+                { value: '', label: 'Select destination account' },
+                ...accounts
+                  .filter(acc => acc.id !== internationalTransferForm.fromAccountId)
+                  .map(acc => ({
+                    value: acc.id,
+                    label: `${acc.bank_name || acc.bankName} (${acc.currency}) - ${formatCurrency(acc.balance, acc.currency)}`
+                  }))
+              ]}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Amount {getSourceAccount() && `(${getSourceAccount()?.currency})`}
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  value={internationalTransferForm.amount}
+                  onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, amount: e.target.value })}
+                  placeholder="0.00"
+                  step="0.01"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                {getSourceAccount() && (
+                  <div className="absolute right-3 top-2 text-gray-500 font-medium">
+                    {getSourceAccount()?.currency}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <Input
+              label="Description"
+              value={internationalTransferForm.description}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, description: e.target.value })}
+              placeholder="Optional description"
+            />
+          </div>
+
+          {/* Exchange Rate Section */}
+          {getSourceAccount() && getDestinationAccount() && getSourceAccount()?.currency !== getDestinationAccount()?.currency && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 mb-3">Exchange Rate Information</h4>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="useManualRate"
+                    checked={internationalTransferForm.useManualRate}
+                    onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, useManualRate: e.target.checked })}
+                    className="rounded border-gray-300"
+                  />
+                  <label htmlFor="useManualRate" className="text-sm font-medium text-gray-700">
+                    Use Manual Exchange Rate
+                  </label>
+                </div>
+
+                {internationalTransferForm.useManualRate ? (
+                  <Input
+                    label={`Manual Rate (1 ${getSourceAccount()?.currency} = ? ${getDestinationAccount()?.currency})`}
+                    type="number"
+                    value={internationalTransferForm.manualExchangeRate}
+                    onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, manualExchangeRate: e.target.value })}
+                    placeholder="0.0000"
+                    step="0.0001"
+                  />
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Current Exchange Rate</label>
+                    <div className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900">
+                      {currentExchangeRate ? (
+                        `1 ${getSourceAccount()?.currency} = ${currentExchangeRate.toFixed(4)} ${getDestinationAccount()?.currency}`
+                      ) : (
+                        'Calculating...'
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <Input
+                label="Exchange Rate Markup (%)"
+                type="number"
+                value={internationalTransferForm.exchangeRateMarkup}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, exchangeRateMarkup: e.target.value })}
+                placeholder="0.00"
+                step="0.01"
+                helpText="Additional percentage markup over base rate (simulates bank fees)"
+              />
+            </div>
+          )}
+
+          {/* Transfer Costs Section */}
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h4 className="font-medium text-yellow-900 mb-3">Transfer Costs & Adjustments</h4>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label={`Flat Transfer Fee ${getSourceAccount() ? `(${getSourceAccount()?.currency})` : ''}`}
+                type="number"
+                value={internationalTransferForm.flatTransferFee}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, flatTransferFee: e.target.value })}
+                placeholder="0.00"
+                step="0.01"
+                helpText="Fixed fee deducted from source account"
+              />
+
+              <Input
+                label={`Manual Settlement Adjustment ${getDestinationAccount() ? `(${getDestinationAccount()?.currency})` : ''}`}
+                type="number"
+                value={internationalTransferForm.manualSettlementAdjustment}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, manualSettlementAdjustment: e.target.value })}
+                placeholder="0.00"
+                step="0.01"
+                helpText="Manual adjustment to final destination amount"
+              />
+            </div>
+          </div>
+
+          {/* Transfer Summary */}
+          {getSourceAccount() && getDestinationAccount() && internationalTransferForm.amount && currentExchangeRate && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <h4 className="font-medium text-green-900 mb-3">Transfer Summary</h4>
+              
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span>Amount to Transfer:</span>
+                  <span className="font-medium">{formatCurrency(parseFloat(internationalTransferForm.amount), getSourceAccount()?.currency || '')}</span>
+                </div>
+                
+                {parseFloat(internationalTransferForm.flatTransferFee) > 0 && (
+                  <div className="flex justify-between text-red-600">
+                    <span>Flat Transfer Fee:</span>
+                    <span className="font-medium">-{formatCurrency(parseFloat(internationalTransferForm.flatTransferFee), getSourceAccount()?.currency || '')}</span>
+                  </div>
+                )}
+                
+                <div className="flex justify-between">
+                  <span>Exchange Rate Used:</span>
+                  <span className="font-medium">1 {getSourceAccount()?.currency} = {currentExchangeRate.toFixed(4)} {getDestinationAccount()?.currency}</span>
+                </div>
+                
+                {parseFloat(internationalTransferForm.manualSettlementAdjustment) !== 0 && (
+                  <div className="flex justify-between text-blue-600">
+                    <span>Manual Adjustment:</span>
+                    <span className="font-medium">
+                      {parseFloat(internationalTransferForm.manualSettlementAdjustment) > 0 ? '+' : ''}
+                      {formatCurrency(parseFloat(internationalTransferForm.manualSettlementAdjustment), getDestinationAccount()?.currency || '')}
+                    </span>
+                  </div>
+                )}
+                
+                <hr className="border-green-300" />
+                
+                <div className="flex justify-between font-bold text-green-800">
+                  <span>Final Amount Received:</span>
+                  <span>{calculatedDestinationAmount !== null ? formatCurrency(calculatedDestinationAmount, getDestinationAccount()?.currency || '') : 'Calculating...'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        <div className="flex justify-end gap-3 mt-6">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowInternationalTransferModal(false);
+              resetInternationalTransferForm();
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleInternationalTransfer}
+            disabled={!getSourceAccount() || !getDestinationAccount() || !internationalTransferForm.amount || !currentExchangeRate}
+          >
+            Transfer
+          </Button>
+        </div>
       </Modal>
 
       {/* Transfer Modal */}
