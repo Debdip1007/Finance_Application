@@ -42,8 +42,8 @@ interface Transfer {
 
 export function BankAccountsManager() {
   const { user } = useAuth();
-  const { exchangeRates, getExchangeRate } = useExchangeRates();
-  const { defaultCurrency } = useCurrencySettings();
+  const { convert } = useExchangeRates();
+  const { settings } = useCurrencySettings();
   
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
@@ -59,7 +59,7 @@ export function BankAccountsManager() {
     account_number: '',
     ifsc_code: '',
     balance: '',
-    currency: defaultCurrency,
+    currency: settings.defaultCurrency,
     notes: '',
     credit_limit: ''
   });
@@ -165,7 +165,7 @@ export function BankAccountsManager() {
         account_number: '',
         ifsc_code: '',
         balance: '',
-        currency: defaultCurrency,
+        currency: settings.defaultCurrency,
         notes: '',
         credit_limit: ''
       });
@@ -255,7 +255,7 @@ export function BankAccountsManager() {
       if (internationalTransferForm.useManualRate && internationalTransferForm.manualExchangeRate) {
         baseRate = parseFloat(internationalTransferForm.manualExchangeRate);
       } else {
-        baseRate = getExchangeRate(fromAccount.currency, toAccount.currency);
+        baseRate = convert?.(1, fromAccount.currency, toAccount.currency) || 1;
       }
 
       // Calculate final exchange rate with markups
@@ -408,7 +408,7 @@ export function BankAccountsManager() {
     if (internationalTransferForm.useManualRate && internationalTransferForm.manualExchangeRate) {
       baseRate = parseFloat(internationalTransferForm.manualExchangeRate);
     } else {
-      baseRate = getExchangeRate(fromAccount.currency, toAccount.currency);
+      baseRate = convert?.(1, fromAccount.currency, toAccount.currency) || 1;
     }
 
     // Calculate final exchange rate with markups
@@ -530,7 +530,7 @@ export function BankAccountsManager() {
             account_number: '',
             ifsc_code: '',
             balance: '',
-            currency: defaultCurrency,
+            currency: settings.defaultCurrency,
             notes: '',
             credit_limit: ''
           });
@@ -951,18 +951,19 @@ export function BankAccountsManager() {
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Transfers</h3>
           <Table
             columns={[
-              { header: 'Date', accessor: 'date' },
-              { header: 'Type', accessor: 'type' },
-              { header: 'From', accessor: 'from' },
-              { header: 'To', accessor: 'to' },
-              { header: 'Amount', accessor: 'amount' },
-              { header: 'Description', accessor: 'description' }
+              { key: 'date', header: 'Date' },
+              { key: 'type', header: 'Type' },
+              { key: 'from', header: 'From' },
+              { key: 'to', header: 'To' },
+              { key: 'amount', header: 'Amount' },
+              { key: 'description', header: 'Description' }
             ]}
             data={transfers.slice(0, 10).map(transfer => {
               const fromAccount = accounts.find(acc => acc.id === transfer.from_account_id);
               const toAccount = accounts.find(acc => acc.id === transfer.to_account_id);
               
               return {
+                id: transfer.id,
                 date: new Date(transfer.date).toLocaleDateString(),
                 type: transfer.type,
                 from: fromAccount?.bank_name || 'Unknown',
