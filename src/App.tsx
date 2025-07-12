@@ -3,7 +3,7 @@ import { useAuth } from './hooks/useAuth';
 import AuthForm from './components/auth/AuthForm';
 import Layout from './components/layout/Layout';
 import Overview from './components/dashboard/Overview';
-import { BankAccountsManager } from './components/dashboard/BankAccountsManager';
+import BankAccountsManager from './components/dashboard/BankAccountsManager';
 import IncomeManager from './components/dashboard/IncomeManager';
 import ExpenseManager from './components/dashboard/ExpenseManager';
 import InvestmentManager from './components/dashboard/InvestmentManager';
