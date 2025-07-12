@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Edit, Trash2, ArrowUpRight, ArrowDownLeft, Banknote, CreditCard, DollarSign, Archive, Globe } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -81,7 +81,7 @@ const LOAN_TYPES = [
 
 export default function BankAccountsManager() {
   const { user } = useAuth();
-  const { convert } = useExchangeRates();
+  const { convert, rates } = useExchangeRates();
   const { settings } = useCurrencySettings();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -147,6 +147,27 @@ export default function BankAccountsManager() {
       loadLoans();
     }
   }, [user]);
+
+  // Calculate current exchange rate for international transfers
+  const currentExchangeRate = useMemo(() => {
+    if (!internationalTransferForm.fromAccountId || !internationalTransferForm.toAccountId || !rates) {
+      return 1;
+    }
+    
+    const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+    const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+    
+    if (!fromAccount || !toAccount) return 1;
+    
+    const fromCurrency = fromAccount.currency || 'INR';
+    const toCurrency = toAccount.currency || 'INR';
+    
+    if (fromCurrency === toCurrency) return 1;
+    
+    // Convert 1 unit from source to destination currency
+    const converted = convert?.(1, fromCurrency, toCurrency);
+    return converted || 1;
+  }, [internationalTransferForm.fromAccountId, internationalTransferForm.toAccountId, accounts, rates, convert]);
 
   // Calculate transfer breakdown when form changes
   useEffect(() => {
