@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, ArrowUpRight, ArrowDownLeft, Banknote, CreditCard, DollarSign, Archive, Globe, Calculator } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowUpRight, ArrowDownLeft, Banknote, CreditCard, DollarSign, Archive, Globe } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
 import Input from '../ui/Input';
 import Select from '../ui/Select';
 import Table from '../ui/Table';
-import { calculateInternationalTransferAmountWithMarkup, getEffectiveExchangeRate } from '../../lib/internationalTransferCalculator';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useExchangeRates } from '../../hooks/useExchangeRates';
@@ -92,7 +91,6 @@ export default function BankAccountsManager() {
   const [showInternationalTransferModal, setShowInternationalTransferModal] = useState(false);
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [showArchivedLoans, setShowArchivedLoans] = useState(false);
-  const [showCalculatorModal, setShowCalculatorModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
   
@@ -140,19 +138,6 @@ export default function BankAccountsManager() {
     linkedAccountId: '',
     notes: '',
   });
-
-  // International transfer calculator state
-  const [calculatorForm, setCalculatorForm] = useState({
-    sourceAmount: '',
-    sourceCurrency: 'USD',
-    destinationCurrency: 'INR',
-    fixedMarkupFee: '',
-  });
-  const [calculationResult, setCalculationResult] = useState<{
-    baseExchangeRate: number;
-    effectiveExchangeRate: number;
-    destinationAmount: number;
-  } | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -936,64 +921,6 @@ export default function BankAccountsManager() {
     });
   };
 
-  const resetCalculatorForm = () => {
-    setCalculatorForm({
-      sourceAmount: '',
-      sourceCurrency: 'USD',
-      destinationCurrency: 'INR',
-      fixedMarkupFee: '',
-    });
-    setCalculationResult(null);
-  };
-
-  const handleCalculate = () => {
-    try {
-      const sourceAmount = parseFloat(calculatorForm.sourceAmount);
-      const fixedMarkupFee = parseFloat(calculatorForm.fixedMarkupFee);
-
-      if (isNaN(sourceAmount) || sourceAmount <= 0) {
-        alert('Please enter a valid source amount');
-        return;
-      }
-
-      if (isNaN(fixedMarkupFee) || fixedMarkupFee < 0) {
-        alert('Please enter a valid markup fee (0 or greater)');
-        return;
-      }
-
-      if (calculatorForm.sourceCurrency === calculatorForm.destinationCurrency) {
-        alert('Source and destination currencies must be different');
-        return;
-      }
-
-      // Get base exchange rate using the convert function
-      const baseExchangeRate = convert?.(1, calculatorForm.sourceCurrency, calculatorForm.destinationCurrency);
-      
-      if (!baseExchangeRate) {
-        alert('Unable to get exchange rate. Please try again.');
-        return;
-      }
-
-      // Calculate using our function
-      const destinationAmount = calculateInternationalTransferAmountWithMarkup(
-        sourceAmount,
-        baseExchangeRate,
-        fixedMarkupFee
-      );
-
-      const effectiveExchangeRate = getEffectiveExchangeRate(baseExchangeRate, fixedMarkupFee);
-
-      setCalculationResult({
-        baseExchangeRate,
-        effectiveExchangeRate,
-        destinationAmount,
-      });
-    } catch (error) {
-      console.error('Calculation error:', error);
-      alert(error instanceof Error ? error.message : 'Calculation failed');
-    }
-  };
-
   const openEditModal = (account: BankAccount) => {
     setEditingAccount(account);
     setAccountForm({
@@ -1256,13 +1183,6 @@ export default function BankAccountsManager() {
             variant="outline"
           >
             Archived Loans
-          </Button>
-          <Button
-            icon={Calculator}
-            onClick={() => setShowCalculatorModal(true)}
-            variant="outline"
-          >
-            Transfer Calculator
           </Button>
           <Button
             icon={Plus}
@@ -1859,119 +1779,6 @@ export default function BankAccountsManager() {
           <Button onClick={handleTransfer}>
             Transfer
           </Button>
-        </div>
-      </Modal>
-
-      {/* International Transfer Calculator Modal */}
-      <Modal
-        isOpen={showCalculatorModal}
-        onClose={() => {
-          setShowCalculatorModal(false);
-          resetCalculatorForm();
-        }}
-        title="International Transfer Calculator"
-        size="lg"
-      >
-        <div className="space-y-6">
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h4 className="font-medium text-blue-900 mb-2">How it works:</h4>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• Enter the amount you want to send and the markup fee</li>
-              <li>• The markup fee is added directly to the exchange rate</li>
-              <li>• New Exchange Rate = Base Rate + Markup Fee</li>
-              <li>• Final Amount = Source Amount × New Exchange Rate</li>
-            </ul>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Input
-              label="Source Amount"
-              type="number"
-              value={calculatorForm.sourceAmount}
-              onChange={(e) => setCalculatorForm({ ...calculatorForm, sourceAmount: e.target.value })}
-              placeholder="0.00"
-              step="0.01"
-              required
-            />
-            
-            <Input
-              label="Fixed Markup Fee"
-              type="number"
-              value={calculatorForm.fixedMarkupFee}
-              onChange={(e) => setCalculatorForm({ ...calculatorForm, fixedMarkupFee: e.target.value })}
-              placeholder="0.00"
-              step="0.0001"
-              required
-            />
-            
-            <Select
-              label="Source Currency"
-              value={calculatorForm.sourceCurrency}
-              onChange={(e) => setCalculatorForm({ ...calculatorForm, sourceCurrency: e.target.value })}
-              options={CURRENCIES.map(c => ({ value: c.code, label: `${c.name} (${c.symbol})` }))}
-            />
-            
-            <Select
-              label="Destination Currency"
-              value={calculatorForm.destinationCurrency}
-              onChange={(e) => setCalculatorForm({ ...calculatorForm, destinationCurrency: e.target.value })}
-              options={CURRENCIES.map(c => ({ value: c.code, label: `${c.name} (${c.symbol})` }))}
-            />
-          </div>
-
-          <div className="flex justify-center">
-            <Button
-              icon={Calculator}
-              onClick={handleCalculate}
-              size="lg"
-            >
-              Calculate Transfer Amount
-            </Button>
-          </div>
-
-          {calculationResult && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-6">
-              <h4 className="font-semibold text-green-900 mb-4">Calculation Results</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm text-gray-600">Base Exchange Rate</p>
-                    <p className="text-lg font-medium">
-                      1 {calculatorForm.sourceCurrency} = {calculationResult.baseExchangeRate.toFixed(4)} {calculatorForm.destinationCurrency}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Markup Fee</p>
-                    <p className="text-lg font-medium">
-                      +{parseFloat(calculatorForm.fixedMarkupFee).toFixed(4)} {calculatorForm.destinationCurrency}
-                    </p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm text-gray-600">Effective Exchange Rate</p>
-                    <p className="text-lg font-medium text-blue-600">
-                      1 {calculatorForm.sourceCurrency} = {calculationResult.effectiveExchangeRate.toFixed(4)} {calculatorForm.destinationCurrency}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Final Destination Amount</p>
-                    <p className="text-2xl font-bold text-green-600">
-                      {formatCurrency(calculationResult.destinationAmount, calculatorForm.destinationCurrency)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="mt-4 pt-4 border-t border-green-200">
-                <p className="text-sm text-green-700">
-                  <strong>Summary:</strong> Sending {formatCurrency(parseFloat(calculatorForm.sourceAmount), calculatorForm.sourceCurrency)} 
-                  {' '}will result in {formatCurrency(calculationResult.destinationAmount, calculatorForm.destinationCurrency)} 
-                  {' '}at the effective rate of {calculationResult.effectiveExchangeRate.toFixed(4)}.
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       </Modal>
     </div>
