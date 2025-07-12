@@ -12,6 +12,7 @@ import { useExchangeRates } from '../../hooks/useExchangeRates';
 import { useCurrencySettings } from '../../hooks/useCurrencySettings';
 import { currencyConverter } from '../../lib/currencyConverter';
 import { formatCurrency, CURRENCIES } from '../../lib/currencies';
+import { calculateCompleteTransferBreakdown, TransferBreakdown } from '../../lib/transferCalculations';
 import { BankAccount, Loan } from '../../types';
 
 const ACCOUNT_TYPES = [
@@ -93,6 +94,7 @@ export default function BankAccountsManager() {
   const [showArchivedLoans, setShowArchivedLoans] = useState(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
+  const [transferBreakdown, setTransferBreakdown] = useState<TransferBreakdown | null>(null);
   
   const [accountForm, setAccountForm] = useState<AccountFormData>({
     bankName: '',
@@ -145,6 +147,51 @@ export default function BankAccountsManager() {
       loadLoans();
     }
   }, [user]);
+
+  // Calculate transfer breakdown when form changes
+  useEffect(() => {
+    if (internationalTransferForm.amount && 
+        internationalTransferForm.fromAccountId && 
+        internationalTransferForm.toAccountId && 
+        currentExchangeRate > 0) {
+      
+      const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+      const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+      
+      if (fromAccount && toAccount) {
+        const breakdown = calculateCompleteTransferBreakdown(
+          parseFloat(internationalTransferForm.amount) || 0,
+          fromAccount.currency,
+          toAccount.currency,
+          internationalTransferForm.useCustomRate ? 
+            (parseFloat(internationalTransferForm.customExchangeRate) || 0) : 
+            currentExchangeRate,
+          parseFloat(internationalTransferForm.percentageMarkup) || 0,
+          parseFloat(internationalTransferForm.fixedMarkupFee) || 0,
+          parseFloat(internationalTransferForm.extraFee) || 0,
+          internationalTransferForm.extraFeeCurrency,
+          parseFloat(internationalTransferForm.bufferAmount) || 0
+        );
+        
+        setTransferBreakdown(breakdown);
+      }
+    } else {
+      setTransferBreakdown(null);
+    }
+  }, [
+    internationalTransferForm.amount,
+    internationalTransferForm.fromAccountId,
+    internationalTransferForm.toAccountId,
+    internationalTransferForm.useCustomRate,
+    internationalTransferForm.customExchangeRate,
+    internationalTransferForm.percentageMarkup,
+    internationalTransferForm.fixedMarkupFee,
+    internationalTransferForm.extraFee,
+    internationalTransferForm.extraFeeCurrency,
+    internationalTransferForm.bufferAmount,
+    currentExchangeRate,
+    accounts
+  ]);
 
   const loadAccounts = async () => {
     setLoading(true);
@@ -1584,78 +1631,72 @@ export default function BankAccountsManager() {
             />
           </div>
 
-          {/* Transfer Summary */}
-          {internationalTransferForm.fromAccountId && internationalTransferForm.toAccountId && 
-           internationalTransferForm.amount && internationalTransferForm.exchangeRate && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-              <h4 className="font-medium text-indigo-900 mb-3">Transfer Summary</h4>
-              <div className="space-y-2 text-sm">
-                {(() => {
-                  const amount = parseFloat(internationalTransferForm.amount) || 0;
-                  const rate = parseFloat(internationalTransferForm.exchangeRate) || 0;
-                  const percentageMarkup = (parseFloat(internationalTransferForm.percentageMarkupFee) || 0) / 100;
-                  const fixedMarkup = parseFloat(internationalTransferForm.fixedMarkupFee) || 0;
-                  const extraFee = parseFloat(internationalTransferForm.extraFeeAmount) || 0;
-                  const makeup = parseFloat(internationalTransferForm.makeupAmount) || 0;
-                  
-                  const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
-                  const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
-                  
-                  if (!fromAccount || !toAccount) return null;
-                  
-                  const convertedAmount = amount * rate;
-                  const percentageMarkupAmount = convertedAmount * percentageMarkup;
-                  const totalDestination = convertedAmount + percentageMarkupAmount + fixedMarkup + makeup;
-                  
-                  const extraFeeInSource = internationalTransferForm.extraFeeCurrency === 'source' ? extraFee : extraFee / rate;
-                  const totalSourceDeduction = amount + extraFeeInSource;
-                  
-                  return (
-                    <>
-                      <div className="flex justify-between">
-                        <span>Transfer Amount:</span>
-                        <span className="font-medium">{formatCurrency(amount, fromAccount.currency)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Converted Amount:</span>
-                        <span className="font-medium">{formatCurrency(convertedAmount, toAccount.currency)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Percentage Markup:</span>
-                        <span className="font-medium">{formatCurrency(percentageMarkupAmount, toAccount.currency)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Fixed Markup:</span>
-                        <span className="font-medium">{formatCurrency(fixedMarkup, toAccount.currency)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Make-up Amount:</span>
-                        <span className="font-medium">{formatCurrency(makeup, toAccount.currency)}</span>
-                      </div>
-                      {extraFee > 0 && (
-                        <div className="flex justify-between">
-                          <span>Extra Fee:</span>
-                          <span className="font-medium">
-                            {internationalTransferForm.extraFeeCurrency === 'source' 
-                              ? formatCurrency(extraFee, fromAccount.currency)
-                              : formatCurrency(extraFee, toAccount.currency)
-                            }
-                          </span>
-                        </div>
-                      )}
-                      <hr className="border-indigo-200" />
-                      <div className="flex justify-between font-semibold">
-                        <span>Total Deducted:</span>
-                        <span className="text-red-600">{formatCurrency(totalSourceDeduction, fromAccount.currency)}</span>
-                      </div>
-                      <div className="flex justify-between font-semibold">
-                        <span>Total Received:</span>
-                        <span className="text-green-600">{formatCurrency(totalDestination, toAccount.currency)}</span>
-                      </div>
-                    </>
-                  );
-                })()}
+          {/* Transfer Breakdown */}
+          {transferBreakdown && transferBreakdown.isValid && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-medium text-blue-900 mb-3">Transfer Breakdown</h4>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-blue-700">Source Amount:</span>
+                  <span className="font-medium ml-2">
+                    {formatCurrency(transferBreakdown.sourceAmount, transferBreakdown.sourceCurrency)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Base Rate:</span>
+                  <span className="font-medium ml-2">
+                    1 {transferBreakdown.sourceCurrency} = {transferBreakdown.baseExchangeRate} {transferBreakdown.destinationCurrency}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Converted Amount:</span>
+                  <span className="font-medium ml-2">
+                    {formatCurrency(transferBreakdown.convertedAmount, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Percentage Markup:</span>
+                  <span className="font-medium ml-2">
+                    {formatCurrency(transferBreakdown.percentageMarkupAmount, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Fixed Markup:</span>
+                  <span className="font-medium ml-2">
+                    {formatCurrency(transferBreakdown.fixedMarkupFee, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Extra Fee:</span>
+                  <span className="font-medium ml-2">
+                    {formatCurrency(transferBreakdown.extraFeeConverted, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Buffer Amount:</span>
+                  <span className="font-medium ml-2">
+                    {formatCurrency(transferBreakdown.bufferAmount, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-blue-700">Total Fees:</span>
+                  <span className="font-medium ml-2 text-orange-600">
+                    {formatCurrency(transferBreakdown.totalFees, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
+                <div className="col-span-2 pt-2 border-t border-blue-200">
+                  <span className="text-blue-700 font-medium">Final Destination Amount:</span>
+                  <span className="font-bold ml-2 text-green-600 text-lg">
+                    {formatCurrency(transferBreakdown.totalDestinationAmount, transferBreakdown.destinationCurrency)}
+                  </span>
+                </div>
               </div>
+            </div>
+          )}
+          
+          {transferBreakdown && !transferBreakdown.isValid && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <p className="text-red-600 text-sm">{transferBreakdown.errorMessage}</p>
             </div>
           )}
         </div>
