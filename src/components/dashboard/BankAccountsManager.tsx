@@ -480,7 +480,7 @@ export function BankAccountsManager() {
             <div className="space-y-2">
               <div className="flex justify-between">
                 <span className="text-sm text-gray-600">Balance:</span>
-                <CurrencyDisplay amount={account.balance} currency={account.currency} />
+                <CurrencyDisplay originalAmount={account.balance} originalCurrency={account.currency} />
               </div>
               {account.account_number && (
                 <div className="flex justify-between">
@@ -491,7 +491,7 @@ export function BankAccountsManager() {
               {account.credit_limit > 0 && (
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Credit Limit:</span>
-                  <CurrencyDisplay amount={account.credit_limit} currency={account.currency} />
+                  <CurrencyDisplay originalAmount={account.credit_limit} originalCurrency={account.currency} />
                 </div>
               )}
             </div>
@@ -950,19 +950,26 @@ export function BankAccountsManager() {
         <Card className="p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Transfers</h3>
           <Table
-            headers={['Date', 'Type', 'From', 'To', 'Amount', 'Description']}
+            columns={[
+              { header: 'Date', accessor: 'date' },
+              { header: 'Type', accessor: 'type' },
+              { header: 'From', accessor: 'from' },
+              { header: 'To', accessor: 'to' },
+              { header: 'Amount', accessor: 'amount' },
+              { header: 'Description', accessor: 'description' }
+            ]}
             data={transfers.slice(0, 10).map(transfer => {
               const fromAccount = accounts.find(acc => acc.id === transfer.from_account_id);
               const toAccount = accounts.find(acc => acc.id === transfer.to_account_id);
               
-              return [
-                new Date(transfer.date).toLocaleDateString(),
-                transfer.type,
-                fromAccount?.bank_name || 'Unknown',
-                toAccount?.bank_name || transfer.type === 'Debt Payment' ? 'Debt Payment' : 'Cash Withdrawal',
-                <CurrencyDisplay key={transfer.id} amount={transfer.amount} currency={transfer.currency} />,
-                transfer.description || '-'
-              ];
+              return {
+                date: new Date(transfer.date).toLocaleDateString(),
+                type: transfer.type,
+                from: fromAccount?.bank_name || 'Unknown',
+                to: toAccount?.bank_name || transfer.type === 'Debt Payment' ? 'Debt Payment' : 'Cash Withdrawal',
+                amount: <CurrencyDisplay key={transfer.id} originalAmount={transfer.amount} originalCurrency={transfer.currency} />,
+                description: transfer.description || '-'
+              };
             })}
           />
         </Card>
