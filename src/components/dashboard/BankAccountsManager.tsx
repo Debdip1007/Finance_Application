@@ -1582,7 +1582,6 @@ export default function BankAccountsManager() {
             <Input
               label="Description"
               value={internationalTransferForm.description}
-                         {/* Percentage Markup Calculation */}
                          <div className="bg-white border border-gray-200 rounded-lg p-3">
                            <h5 className="font-medium text-gray-800 mb-2">1. Percentage Markup Calculation</h5>
                            <div className="space-y-1 text-sm font-mono">
