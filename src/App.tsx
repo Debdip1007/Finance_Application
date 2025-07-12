@@ -9,10 +9,16 @@ import ExpenseManager from './components/dashboard/ExpenseManager';
 import InvestmentManager from './components/dashboard/InvestmentManager';
 import GoalManager from './components/dashboard/GoalManager';
 import CurrencySettings from './components/settings/CurrencySettings';
+import Goodbye from './pages/Goodbye';
 
 export default function App() {
   const { user, loading } = useAuth();
   const [currentTab, setCurrentTab] = useState('overview');
+
+  // Check if we're on the goodbye page
+  if (window.location.pathname === '/goodbye') {
+    return <Goodbye />;
+  }
 
   if (loading) {
     return (
