@@ -177,7 +177,7 @@ export function BankAccountsManager() {
   };
 
   const handleDeleteAccount = async (account: BankAccount) => {
-    if (!confirm(`Are you sure you want to delete the account "${account.bank_name || account.bankName}"? This cannot be undone.`)) {
+    if (!confirm(\`Are you sure you want to delete the account "${account.bank_name || account.bankName}"? This cannot be undone.`)) {
       return;
     }
 
@@ -638,7 +638,7 @@ export function BankAccountsManager() {
               { value: '', label: 'Select source account' },
               ...accounts.map(acc => ({
                 value: acc.id,
-                label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
+                label: \`${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
               }))
             ]}
             error={errors.fromAccountId}
@@ -651,7 +651,7 @@ export function BankAccountsManager() {
               { value: '', label: 'Select destination account' },
               ...accounts.map(acc => ({
                 value: acc.id,
-                label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
+                label: \`${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
               }))
             ]}
             error={errors.toAccountId}
