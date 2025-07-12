@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useExchangeRates } from '../../hooks/useExchangeRates';
 import { useCurrencySettings } from '../../hooks/useCurrencySettings';
 import { Card } from '../ui/Card';
-import { Button } from '../ui/Button';
+import Button from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { Modal } from '../ui/Modal';
