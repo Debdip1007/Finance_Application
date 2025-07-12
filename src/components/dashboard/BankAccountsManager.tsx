@@ -757,7 +757,7 @@ export default function BankAccountsManager() {
         alert('Please select both source and destination accounts');
         return;
       }
-
+      const newExchangeRate = exchangeRate + fixedMarkupFee; 
       // Calculate amounts in different currencies
       const sourceAmount = amount; // Amount entered in source currency
       const convertedAmount = sourceAmount * exchangeRate; // Base converted amount
