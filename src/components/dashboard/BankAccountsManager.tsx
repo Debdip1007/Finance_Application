@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, CreditCard, ArrowRightLeft } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowUpRight, ArrowDownLeft, Banknote, CreditCard, DollarSign, Archive, Globe } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
@@ -8,9 +8,11 @@ import Select from '../ui/Select';
 import Table from '../ui/Table';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
+import { useExchangeRates } from '../../hooks/useExchangeRates';
 import { useCurrencySettings } from '../../hooks/useCurrencySettings';
+import { currencyConverter } from '../../lib/currencyConverter';
 import { formatCurrency, CURRENCIES } from '../../lib/currencies';
-import { BankAccount } from '../../types';
+import { BankAccount, Loan } from '../../types';
 
 const ACCOUNT_TYPES = [
   { value: 'Savings', label: 'Savings' },
@@ -19,13 +21,6 @@ const ACCOUNT_TYPES = [
   { value: 'Loan', label: 'Loan' },
   { value: 'Cash', label: 'Cash' },
   { value: 'Other', label: 'Other' },
-];
-
-const TRANSFER_TYPES = [
-  { value: 'Self', label: 'Between My Accounts' },
-  { value: 'External', label: 'To External Account' },
-  { value: 'Cash Withdrawal', label: 'Cash Withdrawal' },
-  { value: 'Debt Repayment', label: 'Debt Repayment' },
 ];
 
 interface AccountFormData {
@@ -43,45 +38,111 @@ interface TransferFormData {
   fromAccountId: string;
   toAccountId: string;
   amount: string;
-  currency: string;
-  type: string;
   description: string;
-  date: string;
+  type: 'Self' | 'External' | 'Cash Withdrawal' | 'Debt Repayment';
 }
+
+interface InternationalTransferFormData {
+  fromAccountId: string;
+  toAccountId: string;
+  amount: string;
+  description: string;
+  exchangeRate: string;
+  useCustomRate: boolean;
+  percentageMarkupFee: string;
+  fixedMarkupFee: string;
+  extraFeeAmount: string;
+  extraFeeCurrency: 'source' | 'destination';
+  makeupAmount: string;
+}
+
+interface LoanFormData {
+  lenderName: string;
+  loanType: string;
+  principalAmount: string;
+  interestRate: string;
+  startDate: string;
+  termMonths: string;
+  monthlyPayment: string;
+  linkedAccountId: string;
+  notes: string;
+}
+
+const LOAN_TYPES = [
+  { value: 'Personal', label: 'Personal Loan' },
+  { value: 'Home', label: 'Home Loan' },
+  { value: 'Car', label: 'Car Loan' },
+  { value: 'Education', label: 'Education Loan' },
+  { value: 'Business', label: 'Business Loan' },
+  { value: 'Credit Line', label: 'Credit Line' },
+  { value: 'Other', label: 'Other' },
+];
 
 export default function BankAccountsManager() {
   const { user } = useAuth();
+  const { convert } = useExchangeRates();
   const { settings } = useCurrencySettings();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [archivedLoans, setArchivedLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showInternationalTransferModal, setShowInternationalTransferModal] = useState(false);
+  const [showLoanModal, setShowLoanModal] = useState(false);
+  const [showArchivedLoans, setShowArchivedLoans] = useState(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
+  const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
   
   const [accountForm, setAccountForm] = useState<AccountFormData>({
     bankName: '',
     accountType: 'Savings',
     accountNumber: '',
     ifscCode: '',
-    balance: '0',
+    balance: '0.00',
     currency: 'INR',
     notes: '',
-    creditLimit: '0',
+    creditLimit: '0.00',
   });
 
   const [transferForm, setTransferForm] = useState<TransferFormData>({
     fromAccountId: '',
     toAccountId: '',
     amount: '',
-    currency: 'INR',
-    type: 'Self',
     description: '',
-    date: new Date().toISOString().split('T')[0],
+    type: 'Self',
+  });
+
+  const [internationalTransferForm, setInternationalTransferForm] = useState<InternationalTransferFormData>({
+    fromAccountId: '',
+    toAccountId: '',
+    amount: '',
+    description: '',
+    exchangeRate: '',
+    useCustomRate: false,
+    percentageMarkupFee: '0',
+    fixedMarkupFee: '0',
+    extraFeeAmount: '0',
+    extraFeeCurrency: 'source',
+    makeupAmount: '0',
+  });
+
+  const [loanForm, setLoanForm] = useState<LoanFormData>({
+    lenderName: '',
+    loanType: 'Personal',
+    principalAmount: '',
+    interestRate: '0',
+    startDate: new Date().toISOString().split('T')[0],
+    termMonths: '',
+    monthlyPayment: '',
+    linkedAccountId: '',
+    notes: '',
   });
 
   useEffect(() => {
     if (user) {
       loadAccounts();
+      loadLoans();
     }
   }, [user]);
 
@@ -92,47 +153,142 @@ export default function BankAccountsManager() {
         .from('bank_accounts')
         .select('*')
         .eq('user_id', user?.id)
-        .order('bank_name');
+        .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error loading accounts:', error);
+        throw error;
+      }
+      
+      console.log('Loaded accounts:', data); // Debug log
       setAccounts(data || []);
     } catch (error) {
       console.error('Error loading accounts:', error);
+      alert('Error loading bank accounts. Please refresh the page.');
     } finally {
       setLoading(false);
     }
   };
 
+  const loadLoans = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('loans')
+        .select('*')
+        .eq('user_id', user?.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error loading loans:', error);
+        throw error;
+      }
+      
+      const activeLoans = (data || []).filter(loan => loan.status === 'Active');
+      const closedLoans = (data || []).filter(loan => loan.status === 'Closed');
+      
+      setLoans(activeLoans);
+      setArchivedLoans(closedLoans);
+    } catch (error) {
+      console.error('Error loading accounts:', error);
+      alert('Error loading bank accounts. Please refresh the page.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Get international accounts (different currency from default)
+  const getInternationalAccounts = () => {
+    return accounts.filter(acc => acc.currency !== settings.defaultCurrency);
+  };
+
+  // Check if transfer is international
+  const isInternationalTransfer = (fromAccountId: string, toAccountId: string) => {
+    const fromAccount = accounts.find(acc => acc.id === fromAccountId);
+    const toAccount = accounts.find(acc => acc.id === toAccountId);
+    return fromAccount && toAccount && fromAccount.currency !== toAccount.currency;
+  };
+
+  // Get current exchange rate between two currencies
+  const getCurrentExchangeRate = async (fromCurrency: string, toCurrency: string) => {
+    const rate = await currencyConverter.getExchangeRate(fromCurrency, toCurrency);
+    return rate || 1;
+  };
+
+  // Update exchange rate when accounts change
+  useEffect(() => {
+    const updateExchangeRate = async () => {
+      if (internationalTransferForm.fromAccountId && internationalTransferForm.toAccountId && !internationalTransferForm.useCustomRate) {
+        const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+        const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+        
+        if (fromAccount && toAccount && fromAccount.currency !== toAccount.currency) {
+          const rate = await getCurrentExchangeRate(fromAccount.currency, toAccount.currency);
+          setInternationalTransferForm(prev => ({
+            ...prev,
+            exchangeRate: rate.toString()
+          }));
+        }
+      }
+    };
+
+    updateExchangeRate();
+  }, [internationalTransferForm.fromAccountId, internationalTransferForm.toAccountId, internationalTransferForm.useCustomRate, accounts]);
+
   const handleSaveAccount = async () => {
     try {
+      // Validate required fields
+      if (!accountForm.bankName.trim()) {
+        alert('Bank name is required');
+        return;
+      }
+
+      if (!accountForm.balance || isNaN(parseFloat(accountForm.balance))) {
+        alert('Valid balance is required');
+        return;
+      }
+
       const accountData = {
-        bank_name: accountForm.bankName,
+        bank_name: accountForm.bankName.trim(),
         account_type: accountForm.accountType,
-        account_number: accountForm.accountNumber || null,
-        ifsc_code: accountForm.ifscCode || null,
-        balance: parseFloat(accountForm.balance) || 0,
+        account_number: accountForm.accountNumber.trim() || null,
+        ifsc_code: accountForm.ifscCode.trim() || null,
+        balance: ['Credit Card', 'Loan'].includes(accountForm.accountType) 
+          ? -Math.abs(parseFloat(accountForm.balance))
+          : parseFloat(accountForm.balance),
         currency: accountForm.currency,
-        notes: accountForm.notes || null,
+        notes: accountForm.notes.trim() || null,
         credit_limit: parseFloat(accountForm.creditLimit) || 0,
         user_id: user?.id,
       };
 
+      console.log('Saving account data:', accountData); // Debug log
+
+      let result;
       if (editingAccount) {
-        const { error } = await supabase
+        result = await supabase
           .from('bank_accounts')
           .update(accountData)
-          .eq('id', editingAccount.id);
-        if (error) throw error;
+          .eq('id', editingAccount.id)
+          .eq('user_id', user?.id);
       } else {
-        const { error } = await supabase
+        result = await supabase
           .from('bank_accounts')
-          .insert([accountData]);
-        if (error) throw error;
+          .insert([accountData])
+          .select();
       }
 
+      if (result.error) {
+        console.error('Database error:', result.error);
+        throw result.error;
+      }
+
+      console.log('Account saved successfully:', result.data); // Debug log
+      
       await loadAccounts();
       setShowAccountModal(false);
       resetAccountForm();
+      
+      alert(editingAccount ? 'Account updated successfully!' : 'Account added successfully!');
     } catch (error) {
       console.error('Error saving account:', error);
       alert('Error saving account. Please try again.');
@@ -148,86 +304,565 @@ export default function BankAccountsManager() {
       const { error } = await supabase
         .from('bank_accounts')
         .delete()
-        .eq('id', account.id);
+        .eq('id', account.id)
+        .eq('user_id', user?.id);
 
       if (error) throw error;
+      
       await loadAccounts();
+      alert('Account deleted successfully!');
     } catch (error) {
       console.error('Error deleting account:', error);
       alert('Error deleting account. Please try again.');
     }
   };
 
-  const handleTransfer = async () => {
+  const handleSaveLoan = async () => {
     try {
-      if (!transferForm.fromAccountId || !transferForm.amount) {
-        alert('Please fill in all required fields');
+      if (!loanForm.lenderName.trim()) {
+        alert('Lender name is required');
         return;
       }
 
+      if (!loanForm.principalAmount || isNaN(parseFloat(loanForm.principalAmount))) {
+        alert('Valid principal amount is required');
+        return;
+      }
+
+      const principalAmount = parseFloat(loanForm.principalAmount);
+      const interestRate = parseFloat(loanForm.interestRate) || 0;
+      const termMonths = parseInt(loanForm.termMonths) || null;
+      const monthlyPayment = parseFloat(loanForm.monthlyPayment) || null;
+
+      const loanData = {
+        lender_name: loanForm.lenderName.trim(),
+        loan_type: loanForm.loanType,
+        principal_amount: principalAmount,
+        interest_rate: interestRate,
+        start_date: loanForm.startDate,
+        term_months: termMonths,
+        monthly_payment: monthlyPayment,
+        remaining_balance: principalAmount,
+        status: 'Active',
+        linked_account_id: loanForm.linkedAccountId || null,
+        notes: loanForm.notes.trim() || null,
+        user_id: user?.id,
+      };
+
+      let result;
+      if (editingLoan) {
+        result = await supabase
+          .from('loans')
+          .update(loanData)
+          .eq('id', editingLoan.id)
+          .eq('user_id', user?.id);
+      } else {
+        result = await supabase
+          .from('loans')
+          .insert([loanData])
+          .select();
+
+        // If linked to an account, add the loan amount as income and update account balance
+        if (loanForm.linkedAccountId && !editingLoan) {
+          const account = accounts.find(acc => acc.id === loanForm.linkedAccountId);
+          if (account) {
+            // Update account balance
+            const { error: balanceError } = await supabase
+              .from('bank_accounts')
+              .update({
+                balance: account.balance + principalAmount
+              })
+              .eq('id', loanForm.linkedAccountId)
+              .eq('user_id', user?.id);
+            
+            if (balanceError) throw balanceError;
+
+            // Add as loan income
+            const { error: incomeError } = await supabase
+              .from('incomes')
+              .insert([{
+                date: loanForm.startDate,
+                source: `Loan from ${loanForm.lenderName}`,
+                amount: principalAmount,
+                currency: account.currency,
+                frequency: 'One-time',
+                notes: `Loan income - ${loanForm.loanType} loan`,
+                account_id: loanForm.linkedAccountId,
+                is_loan_income: true,
+                linked_loan_id: result.data?.[0]?.id,
+                settlement_status: 'Not Settled',
+                user_id: user?.id,
+              }]);
+            
+            if (incomeError) throw incomeError;
+          }
+        }
+      }
+
+      if (result.error) throw result.error;
+      
+      await loadLoans();
+      await loadAccounts();
+      setShowLoanModal(false);
+      resetLoanForm();
+      
+      alert(editingLoan ? 'Loan updated successfully!' : 'Loan added successfully!');
+    } catch (error) {
+      console.error('Error saving loan:', error);
+      alert('Error saving loan. Please try again.');
+    }
+  };
+
+  const handleDeleteLoan = async (loan: Loan) => {
+    if (!confirm(`Are you sure you want to delete the loan from ${loan.lender_name}?`)) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('loans')
+        .delete()
+        .eq('id', loan.id)
+        .eq('user_id', user?.id);
+
+      if (error) throw error;
+      
+      await loadLoans();
+      alert('Loan deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting loan:', error);
+      alert('Error deleting loan. Please try again.');
+    }
+  };
+
+  const handleLoanRepayment = async (loan: Loan) => {
+    const repaymentAmount = prompt(
+      `Enter repayment amount for ${loan.lender_name}:\n\nRemaining balance: ${formatCurrency(loan.remaining_balance, 'INR')}`,
+      loan.monthly_payment?.toString() || ''
+    );
+    
+    if (!repaymentAmount || isNaN(parseFloat(repaymentAmount))) {
+      return;
+    }
+
+    const amount = parseFloat(repaymentAmount);
+    const newBalance = Math.max(0, loan.remaining_balance - amount);
+    const isFullyPaid = newBalance === 0;
+
+    try {
+      // Update loan balance
+      const { error: loanError } = await supabase
+        .from('loans')
+        .update({ 
+          remaining_balance: newBalance,
+          status: isFullyPaid ? 'Closed' : 'Active'
+        })
+        .eq('id', loan.id)
+        .eq('user_id', user?.id);
+      
+      if (loanError) throw loanError;
+
+      // Add repayment record
+      const { error: repaymentError } = await supabase
+        .from('loan_repayments')
+        .insert([{
+          loan_id: loan.id,
+          payment_amount: amount,
+          payment_date: new Date().toISOString().split('T')[0],
+          principal_amount: amount, // Simplified - could be split between principal and interest
+          interest_amount: 0,
+          notes: `Repayment for ${loan.lender_name}`,
+          user_id: user?.id,
+        }]);
+      
+      if (repaymentError) throw repaymentError;
+
+      // Add as expense
+      const { error: expenseError } = await supabase
+        .from('expenses')
+        .insert([{
+          date: new Date().toISOString().split('T')[0],
+          category: 'Loan Repayment',
+          description: `Repayment to ${loan.lender_name}`,
+          amount: amount,
+          currency: 'INR',
+          type: 'Mandatory',
+          account_id: loan.linked_account_id,
+          payment_status: 'Paid',
+          payment_date: new Date().toISOString().split('T')[0],
+          user_id: user?.id,
+        }]);
+      
+      if (expenseError) throw expenseError;
+
+      // Update linked account balance if exists
+      if (loan.linked_account_id) {
+        const account = accounts.find(acc => acc.id === loan.linked_account_id);
+        if (account) {
+          const { error: balanceError } = await supabase
+            .from('bank_accounts')
+            .update({
+              balance: account.balance - amount
+            })
+            .eq('id', loan.linked_account_id)
+            .eq('user_id', user?.id);
+          
+          if (balanceError) throw balanceError;
+        }
+      }
+
+      // If fully paid, update loan income settlement status
+      if (isFullyPaid) {
+        await supabase
+          .from('incomes')
+          .update({ settlement_status: 'Settled' })
+          .eq('linked_loan_id', loan.id)
+          .eq('user_id', user?.id);
+      }
+      
+      await loadLoans();
+      await loadAccounts();
+      alert(isFullyPaid ? 'Loan fully repaid and closed!' : 'Repayment recorded successfully!');
+    } catch (error) {
+      console.error('Error processing loan repayment:', error);
+      alert('Error processing loan repayment. Please try again.');
+    }
+  };
+
+  const handleTransfer = async () => {
+    try {
       const amount = parseFloat(transferForm.amount);
-      if (amount <= 0) {
-        alert('Transfer amount must be greater than zero');
+      if (isNaN(amount) || amount <= 0) {
+        alert('Please enter a valid amount');
         return;
       }
 
       const fromAccount = accounts.find(acc => acc.id === transferForm.fromAccountId);
+      
+      // Handle both regular accounts and loan accounts
+      let toAccount = null;
+      let isLoanRepayment = false;
+      let targetLoan = null;
+      
+      if (transferForm.toAccountId) {
+        if (transferForm.toAccountId.startsWith('loan-')) {
+          // This is a loan repayment
+          const loanId = transferForm.toAccountId.replace('loan-', '');
+          targetLoan = loans.find(loan => loan.id === loanId);
+          isLoanRepayment = true;
+        } else {
+          // This is a regular account
+          toAccount = accounts.find(acc => acc.id === transferForm.toAccountId);
+        }
+      }
+
       if (!fromAccount) {
-        alert('Source account not found');
+        alert('Please select a source account');
         return;
       }
 
-      // Check if sufficient balance for non-credit accounts
-      if (!['Credit Card', 'Loan'].includes(fromAccount.account_type || fromAccount.accountType || '') && 
-          fromAccount.balance < amount) {
-        alert('Insufficient balance in source account');
-        return;
-      }
-
-      const transferData = {
-        from_account_id: transferForm.fromAccountId,
-        to_account_id: transferForm.toAccountId || null,
-        amount: amount,
-        currency: transferForm.currency,
-        type: transferForm.type,
-        description: transferForm.description || null,
-        date: transferForm.date,
-        user_id: user?.id,
-      };
-
-      const { error } = await supabase
-        .from('transfers')
-        .insert([transferData]);
-
-      if (error) throw error;
-
-      // Update account balances
+      // Convert amount to account currencies using currency converter
+      const fromConversion = await currencyConverter.convertAmount(
+        amount,
+        'INR', // Assuming transfer amounts are entered in default currency
+        fromAccount.currency
+      );
+      
+      const amountInFromCurrency = fromConversion ? fromConversion.convertedAmount : amount;
+      
+      // Update source account balance
+      const newFromBalance = fromAccount.balance - amountInFromCurrency;
       const { error: fromError } = await supabase
         .from('bank_accounts')
-        .update({ balance: fromAccount.balance - amount })
-        .eq('id', transferForm.fromAccountId);
-
+        .update({ balance: newFromBalance })
+        .eq('id', fromAccount.id)
+        .eq('user_id', user?.id);
+      
       if (fromError) throw fromError;
 
-      if (transferForm.toAccountId && transferForm.type === 'Self') {
-        const toAccount = accounts.find(acc => acc.id === transferForm.toAccountId);
-        if (toAccount) {
-          const { error: toError } = await supabase
-            .from('bank_accounts')
-            .update({ balance: toAccount.balance + amount })
-            .eq('id', transferForm.toAccountId);
+      // If transferring to another account (not external)
+      if ((toAccount || isLoanRepayment) && (transferForm.type === 'Self' || transferForm.type === 'Debt Repayment')) {
+        if (isLoanRepayment && targetLoan) {
+          // Handle loan repayment
+          const newBalance = Math.max(0, targetLoan.remaining_balance - amount);
+          const isFullyPaid = newBalance === 0;
 
-          if (toError) throw toError;
+          // Update loan balance
+          const { error: loanError } = await supabase
+            .from('loans')
+            .update({ 
+              remaining_balance: newBalance,
+              status: isFullyPaid ? 'Closed' : 'Active'
+            })
+            .eq('id', targetLoan.id)
+            .eq('user_id', user?.id);
+          
+          if (loanError) throw loanError;
+
+          // Add repayment record
+          const { error: repaymentError } = await supabase
+            .from('loan_repayments')
+            .insert([{
+              loan_id: targetLoan.id,
+              payment_amount: amount,
+              payment_date: new Date().toISOString().split('T')[0],
+              principal_amount: amount, // Simplified - could be split between principal and interest
+              interest_amount: 0,
+              notes: `Transfer repayment for ${targetLoan.lender_name}`,
+              user_id: user?.id,
+            }]);
+          
+          if (repaymentError) throw repaymentError;
+
+          // Add as expense
+          const { error: expenseError } = await supabase
+            .from('expenses')
+            .insert([{
+              date: new Date().toISOString().split('T')[0],
+              category: 'Loan Repayment',
+              description: `Transfer repayment to ${targetLoan.lender_name}`,
+              amount: amount,
+              currency: 'INR',
+              type: 'Mandatory',
+              account_id: targetLoan.linked_account_id,
+              payment_status: 'Paid',
+              payment_date: new Date().toISOString().split('T')[0],
+              user_id: user?.id,
+            }]);
+          
+          if (expenseError) throw expenseError;
+
+          // If fully paid, update loan income settlement status
+          if (isFullyPaid) {
+            await supabase
+              .from('incomes')
+              .update({ settlement_status: 'Settled' })
+              .eq('linked_loan_id', targetLoan.id)
+              .eq('user_id', user?.id);
+          }
+        } else if (toAccount) {
+        const toConversion = await currencyConverter.convertAmount(
+          amount,
+          'INR',
+          toAccount.currency
+        );
+        
+        const amountInToCurrency = toConversion ? toConversion.convertedAmount : amount;
+        const newToBalance = toAccount.balance + amountInToCurrency;
+        
+        const { error: toError } = await supabase
+          .from('bank_accounts')
+          .update({ balance: newToBalance })
+          .eq('id', toAccount.id)
+          .eq('user_id', user?.id);
+        
+        if (toError) throw toError;
+        }
+      }
+
+      // Record the transfer
+      const { data: transferData, error: transferError } = await supabase
+        .from('transfers')
+        .insert([{
+          from_account_id: fromAccount.id,
+          to_account_id: isLoanRepayment ? null : (toAccount?.id || null),
+          amount,
+          currency: 'INR',
+          type: transferForm.type,
+          description: isLoanRepayment 
+            ? `Loan repayment to ${targetLoan?.lender_name}` 
+            : (transferForm.description || null),
+          date: new Date().toISOString().split('T')[0],
+          user_id: user?.id,
+        }])
+        .select()
+        .single();
+      
+      if (transferError) throw transferError;
+      
+      // Store conversion data for the transfer
+      if (fromConversion && transferData) {
+        await supabase
+          .from('transaction_conversions')
+          .insert([{
+            transaction_id: transferData.id,
+            transaction_type: 'transfer',
+            original_amount: fromConversion.originalAmount,
+            original_currency: fromConversion.originalCurrency,
+            converted_amount: fromConversion.convertedAmount,
+            converted_currency: fromConversion.convertedCurrency,
+            exchange_rate: fromConversion.exchangeRate,
+            conversion_date: fromConversion.conversionDate,
+          }]);
+      }
+
+      // Handle debt repayment to credit cards
+      if (transferForm.type === 'Debt Repayment' && toAccount && !isLoanRepayment) {
+        const accountType = toAccount.account_type || toAccount.accountType;
+        if (accountType === 'Credit Card') {
+          // Mark related unpaid expenses as paid
+          const { error: expenseUpdateError } = await supabase
+            .from('expenses')
+            .update({ 
+              payment_status: 'Paid',
+              payment_date: new Date().toISOString().split('T')[0],
+              linked_transfer_id: transferData.id
+            })
+            .eq('account_id', toAccount.id)
+            .eq('payment_status', 'Unpaid')
+            .eq('user_id', user?.id);
+          
+          if (expenseUpdateError) {
+            console.error('Error updating expense payment status:', expenseUpdateError);
+          }
         }
       }
 
       await loadAccounts();
+      await loadLoans();
       setShowTransferModal(false);
       resetTransferForm();
-      alert('Transfer completed successfully!');
+      alert(isLoanRepayment 
+        ? `Loan repayment completed successfully! ${targetLoan && targetLoan.remaining_balance - amount <= 0 ? 'Loan fully paid!' : ''}` 
+        : 'Transfer completed successfully!');
     } catch (error) {
       console.error('Error processing transfer:', error);
       alert('Error processing transfer. Please try again.');
+    }
+  };
+
+  const handleInternationalTransfer = async () => {
+    try {
+      const amount = parseFloat(internationalTransferForm.amount);
+      const exchangeRate = parseFloat(internationalTransferForm.exchangeRate);
+      const percentageMarkup = parseFloat(internationalTransferForm.percentageMarkupFee) / 100;
+      const fixedMarkupFee = parseFloat(internationalTransferForm.fixedMarkupFee);
+      const extraFeeAmount = parseFloat(internationalTransferForm.extraFeeAmount);
+      const makeupAmount = parseFloat(internationalTransferForm.makeupAmount);
+
+      if (isNaN(amount) || amount <= 0) {
+        alert('Please enter a valid amount');
+        return;
+      }
+
+      if (isNaN(exchangeRate) || exchangeRate <= 0) {
+        alert('Please enter a valid exchange rate');
+        return;
+      }
+
+      const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+      const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+
+      if (!fromAccount || !toAccount) {
+        alert('Please select both source and destination accounts');
+        return;
+      }
+
+      // Calculate amounts in different currencies
+      const sourceAmount = amount; // Amount entered in source currency
+      const convertedAmount = sourceAmount * exchangeRate; // Base converted amount
+      const percentageMarkupAmount = convertedAmount * percentageMarkup; // Percentage markup in destination currency
+      const totalDestinationAmount = convertedAmount + percentageMarkupAmount + fixedMarkupFee + makeupAmount; // Total in destination currency
+
+      // Calculate extra fee in the selected currency
+      let extraFeeInSourceCurrency = 0;
+      let extraFeeInDestinationCurrency = 0;
+      
+      if (extraFeeAmount > 0) {
+        if (internationalTransferForm.extraFeeCurrency === 'source') {
+          extraFeeInSourceCurrency = extraFeeAmount;
+          extraFeeInDestinationCurrency = extraFeeAmount * exchangeRate;
+        } else {
+          extraFeeInDestinationCurrency = extraFeeAmount;
+          extraFeeInSourceCurrency = extraFeeAmount / exchangeRate;
+        }
+      }
+
+      // Total amount to deduct from source account
+      const totalSourceDeduction = sourceAmount + extraFeeInSourceCurrency;
+
+      // Update source account balance
+      const newFromBalance = fromAccount.balance - totalSourceDeduction;
+      const { error: fromError } = await supabase
+        .from('bank_accounts')
+        .update({ balance: newFromBalance })
+        .eq('id', fromAccount.id)
+        .eq('user_id', user?.id);
+      
+      if (fromError) throw fromError;
+
+      // Update destination account balance
+      const newToBalance = toAccount.balance + totalDestinationAmount;
+      const { error: toError } = await supabase
+        .from('bank_accounts')
+        .update({ balance: newToBalance })
+        .eq('id', toAccount.id)
+        .eq('user_id', user?.id);
+      
+      if (toError) throw toError;
+
+      // Record the international transfer with detailed breakdown
+      const transferDescription = `International transfer: ${formatCurrency(sourceAmount, fromAccount.currency)} → ${formatCurrency(totalDestinationAmount, toAccount.currency)} (Rate: ${exchangeRate})`;
+      
+      const { data: transferData, error: transferError } = await supabase
+        .from('transfers')
+        .insert([{
+          from_account_id: fromAccount.id,
+          to_account_id: toAccount.id,
+          amount: sourceAmount,
+          currency: fromAccount.currency,
+          type: 'Self',
+          description: transferDescription,
+          date: new Date().toISOString().split('T')[0],
+          user_id: user?.id,
+        }])
+        .select()
+        .single();
+      
+      if (transferError) throw transferError;
+
+      // Store detailed conversion and fee data
+      await supabase
+        .from('transaction_conversions')
+        .insert([{
+          transaction_id: transferData.id,
+          transaction_type: 'international_transfer',
+          original_amount: sourceAmount,
+          original_currency: fromAccount.currency,
+          converted_amount: totalDestinationAmount,
+          converted_currency: toAccount.currency,
+          exchange_rate: exchangeRate,
+          conversion_date: new Date().toISOString(),
+        }]);
+
+      // Record fees as expenses if they exist
+      const totalFees = percentageMarkupAmount + fixedMarkupFee + extraFeeInDestinationCurrency;
+      if (totalFees > 0) {
+        await supabase
+          .from('expenses')
+          .insert([{
+            date: new Date().toISOString().split('T')[0],
+            category: 'Bank Fees',
+            description: `International transfer fees (${fromAccount.currency} → ${toAccount.currency})`,
+            amount: totalFees,
+            currency: toAccount.currency,
+            type: 'Need',
+            account_id: toAccount.id,
+            payment_status: 'Paid',
+            payment_date: new Date().toISOString().split('T')[0],
+            linked_transfer_id: transferData.id,
+            user_id: user?.id,
+          }]);
+      }
+
+      await loadAccounts();
+      setShowInternationalTransferModal(false);
+      resetInternationalTransferForm();
+      
+      alert(`International transfer completed successfully!\n\nDeducted: ${formatCurrency(totalSourceDeduction, fromAccount.currency)}\nReceived: ${formatCurrency(totalDestinationAmount, toAccount.currency)}\nExchange Rate: ${exchangeRate}\nTotal Fees: ${formatCurrency(totalFees, toAccount.currency)}`);
+    } catch (error) {
+      console.error('Error processing international transfer:', error);
+      alert('Error processing international transfer. Please try again.');
     }
   };
 
@@ -237,12 +872,27 @@ export default function BankAccountsManager() {
       accountType: 'Savings',
       accountNumber: '',
       ifscCode: '',
-      balance: '0',
-      currency: 'INR',
+      balance: '0.00',
+      currency: 'USD',
       notes: '',
-      creditLimit: '0',
+      creditLimit: '0.00',
     });
     setEditingAccount(null);
+  };
+
+  const resetLoanForm = () => {
+    setLoanForm({
+      lenderName: '',
+      loanType: 'Personal',
+      principalAmount: '',
+      interestRate: '0',
+      startDate: new Date().toISOString().split('T')[0],
+      termMonths: '',
+      monthlyPayment: '',
+      linkedAccountId: '',
+      notes: '',
+    });
+    setEditingLoan(null);
   };
 
   const resetTransferForm = () => {
@@ -250,10 +900,24 @@ export default function BankAccountsManager() {
       fromAccountId: '',
       toAccountId: '',
       amount: '',
-      currency: 'INR',
-      type: 'Self',
       description: '',
-      date: new Date().toISOString().split('T')[0],
+      type: 'Self',
+    });
+  };
+
+  const resetInternationalTransferForm = () => {
+    setInternationalTransferForm({
+      fromAccountId: '',
+      toAccountId: '',
+      amount: '',
+      description: '',
+      exchangeRate: '',
+      useCustomRate: false,
+      percentageMarkupFee: '0',
+      fixedMarkupFee: '0',
+      extraFeeAmount: '0',
+      extraFeeCurrency: 'source',
+      makeupAmount: '0',
     });
   };
 
@@ -264,26 +928,38 @@ export default function BankAccountsManager() {
       accountType: account.account_type || account.accountType || 'Savings',
       accountNumber: account.account_number || account.accountNumber || '',
       ifscCode: account.ifsc_code || account.ifscCode || '',
-      balance: account.balance.toString(),
-      currency: account.currency,
+      balance: Math.abs(account.balance).toString(),
+      currency: account.currency || 'USD',
       notes: account.notes || '',
-      creditLimit: (account.credit_limit || account.creditLimit || 0).toString(),
+      creditLimit: account.credit_limit?.toString() || account.creditLimit?.toString() || '0.00',
     });
     setShowAccountModal(true);
   };
 
-  const columns = [
+  const openEditLoanModal = (loan: Loan) => {
+    setEditingLoan(loan);
+    setLoanForm({
+      lenderName: loan.lender_name,
+      loanType: loan.loan_type,
+      principalAmount: loan.principal_amount.toString(),
+      interestRate: loan.interest_rate?.toString() || '0',
+      startDate: loan.start_date,
+      termMonths: loan.term_months?.toString() || '',
+      monthlyPayment: loan.monthly_payment?.toString() || '',
+      linkedAccountId: loan.linked_account_id || '',
+      notes: loan.notes || '',
+    });
+    setShowLoanModal(true);
+  };
+
+  const accountColumns = [
     {
       key: 'bankName',
       header: 'Bank Name',
       render: (value: string, row: BankAccount) => (
         <div>
-          <div className="font-medium text-gray-900">
-            {row.bank_name || row.bankName}
-          </div>
-          <div className="text-sm text-gray-500">
-            {row.account_type || row.accountType}
-          </div>
+          <div className="font-medium">{row.bank_name || row.bankName}</div>
+          <div className="text-sm text-gray-500">{row.account_type || row.accountType}</div>
         </div>
       ),
     },
@@ -291,8 +967,8 @@ export default function BankAccountsManager() {
       key: 'accountNumber',
       header: 'Account Number',
       render: (value: string, row: BankAccount) => {
-        const accountNumber = row.account_number || row.accountNumber;
-        return accountNumber ? `****${accountNumber.slice(-4)}` : 'N/A';
+        const accountNum = row.account_number || row.accountNumber;
+        return accountNum ? `****${accountNum.slice(-4)}` : 'N/A';
       },
     },
     {
@@ -300,17 +976,28 @@ export default function BankAccountsManager() {
       header: 'Balance',
       align: 'right' as const,
       render: (value: number, row: BankAccount) => {
-        const isDebt = ['Credit Card', 'Loan'].includes(row.account_type || row.accountType || '');
+        const accountType = row.account_type || row.accountType;
+        const isLiability = ['Credit Card', 'Loan'].includes(accountType);
+        const displayValue = Math.abs(value);
+        const color = isLiability ? 'text-red-600' : 'text-green-600';
+        
         return (
-          <span className={`font-medium ${isDebt && value > 0 ? 'text-red-600' : 'text-green-600'}`}>
-            {formatCurrency(value, row.currency)}
+          <span className={`font-medium ${color}`}>
+            {formatCurrency(displayValue, row.currency)}
           </span>
         );
       },
     },
     {
-      key: 'currency',
-      header: 'Currency',
+      key: 'creditLimit',
+      header: 'Credit Limit',
+      align: 'right' as const,
+      render: (value: number, row: BankAccount) => {
+        const accountType = row.account_type || row.accountType;
+        if (!['Credit Card', 'Loan'].includes(accountType)) return 'N/A';
+        const limit = row.credit_limit || row.creditLimit || 0;
+        return formatCurrency(limit, row.currency);
+      },
     },
     {
       key: 'actions',
@@ -335,15 +1022,116 @@ export default function BankAccountsManager() {
     },
   ];
 
-  const totalAssets = accounts
-    .filter(acc => !['Credit Card', 'Loan'].includes(acc.account_type || acc.accountType || ''))
-    .reduce((sum, account) => sum + account.balance, 0);
+  const loanColumns = [
+    {
+      key: 'lenderName',
+      header: 'Lender',
+      render: (value: string, row: Loan) => (
+        <div>
+          <div className="font-medium">{row.lender_name}</div>
+          <div className="text-sm text-gray-500">{row.loan_type}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'principalAmount',
+      header: 'Principal Amount',
+      align: 'right' as const,
+      render: (value: number, row: Loan) => (
+        <span className="font-medium">
+          {formatCurrency(row.principal_amount, 'INR')}
+        </span>
+      ),
+    },
+    {
+      key: 'remainingBalance',
+      header: 'Remaining Balance',
+      align: 'right' as const,
+      render: (value: number, row: Loan) => (
+        <span className="font-medium text-red-600">
+          {formatCurrency(row.remaining_balance, 'INR')}
+        </span>
+      ),
+    },
+    {
+      key: 'interestRate',
+      header: 'Interest Rate',
+      align: 'right' as const,
+      render: (value: number, row: Loan) => (
+        <span>{row.interest_rate ? `${row.interest_rate}%` : 'N/A'}</span>
+      ),
+    },
+    {
+      key: 'monthlyPayment',
+      header: 'Monthly Payment',
+      align: 'right' as const,
+      render: (value: number, row: Loan) => (
+        <span>{row.monthly_payment ? formatCurrency(row.monthly_payment, 'INR') : 'N/A'}</span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (value: string) => (
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+          value === 'Active' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+        }`}>
+          {value}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (_: any, row: Loan) => (
+        <div className="flex space-x-2">
+          {row.status === 'Active' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={DollarSign}
+              onClick={() => handleLoanRepayment(row)}
+              className="text-green-600 hover:text-green-700"
+              title="Make Repayment"
+            />
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={Edit}
+            onClick={() => openEditLoanModal(row)}
+            title="Edit Loan"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={Trash2}
+            onClick={() => handleDeleteLoan(row)}
+            className="text-red-600 hover:text-red-700"
+            title="Delete Loan"
+          />
+        </div>
+      ),
+    },
+  ];
 
-  const totalLiabilities = accounts
-    .filter(acc => ['Credit Card', 'Loan'].includes(acc.account_type || acc.accountType || ''))
-    .reduce((sum, account) => sum + Math.abs(account.balance), 0);
+  const debtAccounts = accounts.filter(acc => 
+    ['Credit Card', 'Loan'].includes(acc.account_type || acc.accountType || '')
+  );
 
-  const netWorth = totalAssets - totalLiabilities;
+  // Create virtual debt accounts for active loans
+  const loanDebtAccounts = loans.map(loan => ({
+    id: `loan-${loan.id}`,
+    bank_name: loan.lender_name,
+    account_type: 'Loan',
+    balance: -loan.remaining_balance, // Negative to show as debt
+    currency: 'INR',
+    isLoanAccount: true,
+    loanId: loan.id,
+    loanData: loan
+  }));
+
+  const allDebtAccounts = [...debtAccounts, ...loanDebtAccounts];
 
   return (
     <div className="space-y-6">
@@ -353,13 +1141,48 @@ export default function BankAccountsManager() {
           <h2 className="text-2xl font-bold text-gray-900">Bank Accounts</h2>
           <p className="text-gray-600">Manage your bank accounts and transfers</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <Button
-            icon={ArrowRightLeft}
-            onClick={() => setShowTransferModal(true)}
+            icon={ArrowDownLeft}
+            onClick={() => {
+              setTransferForm({ ...transferForm, type: 'Self' });
+              setShowTransferModal(true);
+            }}
             variant="outline"
           >
-            Transfer
+            Self Transfer
+          </Button>
+          <Button
+            icon={Globe}
+            onClick={() => setShowInternationalTransferModal(true)}
+            variant="outline"
+            disabled={getInternationalAccounts().length === 0}
+          >
+            International Transfer
+          </Button>
+          <Button
+            icon={CreditCard}
+            onClick={() => {
+              setTransferForm({ ...transferForm, type: 'Debt Repayment' });
+              setShowTransferModal(true);
+            }}
+            variant="outline"
+          >
+            Debt Repayment
+          </Button>
+          <Button
+            icon={DollarSign}
+            onClick={() => setShowLoanModal(true)}
+            variant="outline"
+          >
+            Add Loan
+          </Button>
+          <Button
+            icon={Archive}
+            onClick={() => setShowArchivedLoans(true)}
+            variant="outline"
+          >
+            Archived Loans
           </Button>
           <Button
             icon={Plus}
@@ -370,55 +1193,21 @@ export default function BankAccountsManager() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Assets</p>
-              <p className="text-2xl font-bold text-green-600">
-                {formatCurrency(totalAssets, settings.defaultCurrency)}
-              </p>
-            </div>
-            <div className="p-3 bg-green-100 rounded-full">
-              <CreditCard className="h-6 w-6 text-green-600" />
-            </div>
-          </div>
+      {/* Active Loans Section */}
+      {loans.length > 0 && (
+        <Card title="Active Loans" subtitle="Loans that are currently being repaid">
+          <Table
+            columns={loanColumns}
+            data={loans}
+            loading={loading}
+          />
         </Card>
-
-        <Card>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Liabilities</p>
-              <p className="text-2xl font-bold text-red-600">
-                {formatCurrency(totalLiabilities, settings.defaultCurrency)}
-              </p>
-            </div>
-            <div className="p-3 bg-red-100 rounded-full">
-              <CreditCard className="h-6 w-6 text-red-600" />
-            </div>
-          </div>
-        </Card>
-
-        <Card>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Net Worth</p>
-              <p className={`text-2xl font-bold ${netWorth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(netWorth, settings.defaultCurrency)}
-              </p>
-            </div>
-            <div className={`p-3 rounded-full ${netWorth >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              <CreditCard className={`h-6 w-6 ${netWorth >= 0 ? 'text-green-600' : 'text-red-600'}`} />
-            </div>
-          </div>
-        </Card>
-      </div>
+      )}
 
       {/* Accounts Table */}
-      <Card>
+      <Card title="Bank Accounts" subtitle="All your bank accounts and balances">
         <Table
-          columns={columns}
+          columns={accountColumns}
           data={accounts}
           loading={loading}
         />
@@ -439,7 +1228,7 @@ export default function BankAccountsManager() {
             label="Bank Name"
             value={accountForm.bankName}
             onChange={(e) => setAccountForm({ ...accountForm, bankName: e.target.value })}
-            placeholder="e.g., Chase Bank"
+            placeholder="Enter bank name"
             required
           />
           
@@ -465,7 +1254,8 @@ export default function BankAccountsManager() {
           />
           
           <Input
-            label="Current Balance"
+            label={accountForm.accountType === 'Credit Card' ? 'Outstanding Amount' : 
+                   accountForm.accountType === 'Loan' ? 'Loan Amount' : 'Initial Balance'}
             type="number"
             value={accountForm.balance}
             onChange={(e) => setAccountForm({ ...accountForm, balance: e.target.value })}
@@ -481,9 +1271,9 @@ export default function BankAccountsManager() {
             options={CURRENCIES.map(c => ({ value: c.code, label: `${c.name} (${c.symbol})` }))}
           />
           
-          {(accountForm.accountType === 'Credit Card' || accountForm.accountType === 'Loan') && (
+          {['Credit Card', 'Loan'].includes(accountForm.accountType) && (
             <Input
-              label="Credit Limit / Loan Amount"
+              label="Credit/Loan Limit"
               type="number"
               value={accountForm.creditLimit}
               onChange={(e) => setAccountForm({ ...accountForm, creditLimit: e.target.value })}
@@ -518,6 +1308,394 @@ export default function BankAccountsManager() {
         </div>
       </Modal>
 
+      {/* Loan Modal */}
+      <Modal
+        isOpen={showLoanModal}
+        onClose={() => {
+          setShowLoanModal(false);
+          resetLoanForm();
+        }}
+        title={editingLoan ? 'Edit Loan' : 'Add New Loan'}
+        size="lg"
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Input
+            label="Lender Name"
+            value={loanForm.lenderName}
+            onChange={(e) => setLoanForm({ ...loanForm, lenderName: e.target.value })}
+            placeholder="Bank name or person"
+            required
+          />
+          
+          <Select
+            label="Loan Type"
+            value={loanForm.loanType}
+            onChange={(e) => setLoanForm({ ...loanForm, loanType: e.target.value })}
+            options={LOAN_TYPES}
+          />
+          
+          <Input
+            label="Principal Amount"
+            type="number"
+            value={loanForm.principalAmount}
+            onChange={(e) => setLoanForm({ ...loanForm, principalAmount: e.target.value })}
+            placeholder="0.00"
+            step="0.01"
+            required
+          />
+          
+          <Input
+            label="Interest Rate (%)"
+            type="number"
+            value={loanForm.interestRate}
+            onChange={(e) => setLoanForm({ ...loanForm, interestRate: e.target.value })}
+            placeholder="0.00"
+            step="0.01"
+          />
+          
+          <Input
+            label="Start Date"
+            type="date"
+            value={loanForm.startDate}
+            onChange={(e) => setLoanForm({ ...loanForm, startDate: e.target.value })}
+            required
+          />
+          
+          <Input
+            label="Term (Months)"
+            type="number"
+            value={loanForm.termMonths}
+            onChange={(e) => setLoanForm({ ...loanForm, termMonths: e.target.value })}
+            placeholder="Optional"
+          />
+          
+          <Input
+            label="Monthly Payment"
+            type="number"
+            value={loanForm.monthlyPayment}
+            onChange={(e) => setLoanForm({ ...loanForm, monthlyPayment: e.target.value })}
+            placeholder="0.00"
+            step="0.01"
+          />
+          
+          <Select
+            label="Linked Account"
+            value={loanForm.linkedAccountId}
+            onChange={(e) => setLoanForm({ ...loanForm, linkedAccountId: e.target.value })}
+            options={[
+              { value: '', label: 'No Account' },
+              ...accounts.map(acc => ({
+                value: acc.id,
+                label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType})`
+              }))
+            ]}
+          />
+        </div>
+        
+        <div className="mt-4">
+          <Input
+            label="Notes"
+            value={loanForm.notes}
+            onChange={(e) => setLoanForm({ ...loanForm, notes: e.target.value })}
+            placeholder="Optional notes"
+          />
+        </div>
+        
+        <div className="flex justify-end gap-3 mt-6">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowLoanModal(false);
+              resetLoanForm();
+            }}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleSaveLoan}>
+            {editingLoan ? 'Update' : 'Add'} Loan
+          </Button>
+        </div>
+      </Modal>
+
+      {/* International Transfer Modal */}
+      <Modal
+        isOpen={showInternationalTransferModal}
+        onClose={() => {
+          setShowInternationalTransferModal(false);
+          resetInternationalTransferForm();
+        }}
+        title="International Transfer"
+        size="lg"
+      >
+        <div className="space-y-6">
+          {/* Account Selection */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Select
+              label="From Account"
+              value={internationalTransferForm.fromAccountId}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, fromAccountId: e.target.value })}
+              options={[
+                { value: '', label: 'Select source account' },
+                ...accounts.map(acc => ({
+                  value: acc.id,
+                  label: `${acc.bank_name || acc.bankName} (${acc.currency}) - ${formatCurrency(acc.balance, acc.currency)}`
+                }))
+              ]}
+            />
+            
+            <Select
+              label="To Account"
+              value={internationalTransferForm.toAccountId}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, toAccountId: e.target.value })}
+              options={[
+                { value: '', label: 'Select destination account' },
+                ...accounts
+                  .filter(acc => acc.id !== internationalTransferForm.fromAccountId)
+                  .map(acc => ({
+                    value: acc.id,
+                    label: `${acc.bank_name || acc.bankName} (${acc.currency}) - ${formatCurrency(acc.balance, acc.currency)}`
+                  }))
+              ]}
+            />
+          </div>
+
+          {/* Transfer Amount */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input
+              label={`Transfer Amount ${internationalTransferForm.fromAccountId ? `(${accounts.find(acc => acc.id === internationalTransferForm.fromAccountId)?.currency || ''})` : ''}`}
+              type="number"
+              value={internationalTransferForm.amount}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, amount: e.target.value })}
+              placeholder="0.00"
+              step="0.01"
+            />
+            
+            <Input
+              label="Description"
+              value={internationalTransferForm.description}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, description: e.target.value })}
+              placeholder="Optional description"
+            />
+          </div>
+
+          {/* Exchange Rate Section */}
+          {internationalTransferForm.fromAccountId && internationalTransferForm.toAccountId && 
+           isInternationalTransfer(internationalTransferForm.fromAccountId, internationalTransferForm.toAccountId) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-medium text-blue-900 mb-3">Exchange Rate</h4>
+              <div className="space-y-3">
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="useCustomRate"
+                    checked={internationalTransferForm.useCustomRate}
+                    onChange={(e) => setInternationalTransferForm({ 
+                      ...internationalTransferForm, 
+                      useCustomRate: e.target.checked 
+                    })}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <label htmlFor="useCustomRate" className="text-sm font-medium text-blue-900">
+                    Use custom exchange rate
+                  </label>
+                </div>
+                
+                <Input
+                  label={`Exchange Rate (1 ${accounts.find(acc => acc.id === internationalTransferForm.fromAccountId)?.currency} = ? ${accounts.find(acc => acc.id === internationalTransferForm.toAccountId)?.currency})`}
+                  type="number"
+                  value={internationalTransferForm.exchangeRate}
+                  onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, exchangeRate: e.target.value })}
+                  placeholder="0.0000"
+                  step="0.0001"
+                  disabled={!internationalTransferForm.useCustomRate}
+                />
+                
+                {!internationalTransferForm.useCustomRate && (
+                  <p className="text-xs text-blue-600">
+                    Using current market rate (automatically updated)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Bank Fees Section */}
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h4 className="font-medium text-yellow-900 mb-3">Bank Fees & Charges</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Percentage Markup Fee (%)"
+                type="number"
+                value={internationalTransferForm.percentageMarkupFee}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, percentageMarkupFee: e.target.value })}
+                placeholder="0.00"
+                step="0.01"
+                helpText="Applied to converted amount"
+              />
+              
+              <Input
+                label={`Fixed Markup Fee ${internationalTransferForm.toAccountId ? `(${accounts.find(acc => acc.id === internationalTransferForm.toAccountId)?.currency || ''})` : ''}`}
+                type="number"
+                value={internationalTransferForm.fixedMarkupFee}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, fixedMarkupFee: e.target.value })}
+                placeholder="0.00"
+                step="0.01"
+                helpText="Fixed fee in destination currency"
+              />
+            </div>
+          </div>
+
+          {/* Extra Fee Section */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h4 className="font-medium text-gray-900 mb-3">Additional Fees</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Extra Fee Amount"
+                type="number"
+                value={internationalTransferForm.extraFeeAmount}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, extraFeeAmount: e.target.value })}
+                placeholder="0.00"
+                step="0.01"
+              />
+              
+              <Select
+                label="Extra Fee Currency"
+                value={internationalTransferForm.extraFeeCurrency}
+                onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, extraFeeCurrency: e.target.value as 'source' | 'destination' })}
+                options={[
+                  { value: 'source', label: `Source (${accounts.find(acc => acc.id === internationalTransferForm.fromAccountId)?.currency || 'Source'})` },
+                  { value: 'destination', label: `Destination (${accounts.find(acc => acc.id === internationalTransferForm.toAccountId)?.currency || 'Destination'})` },
+                ]}
+              />
+            </div>
+          </div>
+
+          {/* Makeup Amount Section */}
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <h4 className="font-medium text-green-900 mb-3">Buffer Amount</h4>
+            <Input
+              label={`Make-up Amount ${internationalTransferForm.toAccountId ? `(${accounts.find(acc => acc.id === internationalTransferForm.toAccountId)?.currency || ''})` : ''}`}
+              type="number"
+              value={internationalTransferForm.makeupAmount}
+              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, makeupAmount: e.target.value })}
+              placeholder="0.00"
+              step="0.01"
+              helpText="Buffer amount to compensate for rate variations"
+            />
+          </div>
+
+          {/* Transfer Summary */}
+          {internationalTransferForm.fromAccountId && internationalTransferForm.toAccountId && 
+           internationalTransferForm.amount && internationalTransferForm.exchangeRate && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+              <h4 className="font-medium text-indigo-900 mb-3">Transfer Summary</h4>
+              <div className="space-y-2 text-sm">
+                {(() => {
+                  const amount = parseFloat(internationalTransferForm.amount) || 0;
+                  const rate = parseFloat(internationalTransferForm.exchangeRate) || 0;
+                  const percentageMarkup = (parseFloat(internationalTransferForm.percentageMarkupFee) || 0) / 100;
+                  const fixedMarkup = parseFloat(internationalTransferForm.fixedMarkupFee) || 0;
+                  const extraFee = parseFloat(internationalTransferForm.extraFeeAmount) || 0;
+                  const makeup = parseFloat(internationalTransferForm.makeupAmount) || 0;
+                  
+                  const fromAccount = accounts.find(acc => acc.id === internationalTransferForm.fromAccountId);
+                  const toAccount = accounts.find(acc => acc.id === internationalTransferForm.toAccountId);
+                  
+                  if (!fromAccount || !toAccount) return null;
+                  
+                  const convertedAmount = amount * rate;
+                  const percentageMarkupAmount = convertedAmount * percentageMarkup;
+                  const totalDestination = convertedAmount + percentageMarkupAmount + fixedMarkup + makeup;
+                  
+                  const extraFeeInSource = internationalTransferForm.extraFeeCurrency === 'source' ? extraFee : extraFee / rate;
+                  const totalSourceDeduction = amount + extraFeeInSource;
+                  
+                  return (
+                    <>
+                      <div className="flex justify-between">
+                        <span>Transfer Amount:</span>
+                        <span className="font-medium">{formatCurrency(amount, fromAccount.currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Converted Amount:</span>
+                        <span className="font-medium">{formatCurrency(convertedAmount, toAccount.currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Percentage Markup:</span>
+                        <span className="font-medium">{formatCurrency(percentageMarkupAmount, toAccount.currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Fixed Markup:</span>
+                        <span className="font-medium">{formatCurrency(fixedMarkup, toAccount.currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Make-up Amount:</span>
+                        <span className="font-medium">{formatCurrency(makeup, toAccount.currency)}</span>
+                      </div>
+                      {extraFee > 0 && (
+                        <div className="flex justify-between">
+                          <span>Extra Fee:</span>
+                          <span className="font-medium">
+                            {internationalTransferForm.extraFeeCurrency === 'source' 
+                              ? formatCurrency(extraFee, fromAccount.currency)
+                              : formatCurrency(extraFee, toAccount.currency)
+                            }
+                          </span>
+                        </div>
+                      )}
+                      <hr className="border-indigo-200" />
+                      <div className="flex justify-between font-semibold">
+                        <span>Total Deducted:</span>
+                        <span className="text-red-600">{formatCurrency(totalSourceDeduction, fromAccount.currency)}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold">
+                        <span>Total Received:</span>
+                        <span className="text-green-600">{formatCurrency(totalDestination, toAccount.currency)}</span>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
+        
+        <div className="flex justify-end gap-3 mt-6">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowInternationalTransferModal(false);
+              resetInternationalTransferForm();
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleInternationalTransfer}
+            disabled={!internationalTransferForm.fromAccountId || !internationalTransferForm.toAccountId || !internationalTransferForm.amount || !internationalTransferForm.exchangeRate}
+          >
+            Transfer
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Archived Loans Modal */}
+      <Modal
+        isOpen={showArchivedLoans}
+        onClose={() => setShowArchivedLoans(false)}
+        title="Archived Loans"
+        size="xl"
+      >
+        <div className="mb-4">
+          <p className="text-gray-600">Historical record of all closed/settled loans</p>
+        </div>
+        <Table
+          columns={loanColumns.filter(col => col.key !== 'actions')}
+          data={archivedLoans}
+          loading={loading}
+        />
+      </Modal>
+
       {/* Transfer Modal */}
       <Modal
         isOpen={showTransferModal}
@@ -525,30 +1703,10 @@ export default function BankAccountsManager() {
           setShowTransferModal(false);
           resetTransferForm();
         }}
-        title="Transfer Money"
-        size="lg"
+        title="Transfer Funds"
+        size="md"
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
-            <input
-              type="date"
-              value={transferForm.date}
-              onChange={(e) => setTransferForm({ ...transferForm, date: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-          </div>
-          
-          <Select
-            label="Transfer Type"
-            value={transferForm.type}
-            onChange={(e) => setTransferForm({ ...transferForm, type: e.target.value })}
-            options={TRANSFER_TYPES}
-          />
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-4">
           <Select
             label="From Account"
             value={transferForm.fromAccountId}
@@ -557,30 +1715,40 @@ export default function BankAccountsManager() {
               { value: '', label: 'Select account' },
               ...accounts.map(acc => ({
                 value: acc.id,
-                label: `${acc.bank_name || acc.bankName} (${formatCurrency(acc.balance, acc.currency)})`
+                label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
               }))
             ]}
           />
           
-          {transferForm.type === 'Self' && (
+          <Select
+            label="Transfer Type"
+            value={transferForm.type}
+            onChange={(e) => setTransferForm({ ...transferForm, type: e.target.value as any })}
+            options={[
+              { value: 'Self', label: 'To My Account' },
+              { value: 'External', label: 'To External Account' },
+              { value: 'Cash Withdrawal', label: 'Cash Withdrawal' },
+              { value: 'Debt Repayment', label: 'Debt Repayment' },
+            ]}
+          />
+          
+          {(transferForm.type === 'Self' || transferForm.type === 'Debt Repayment') && (
             <Select
-              label="To Account"
+              label={transferForm.type === 'Debt Repayment' ? 'To Debt Account' : 'To Account'}
               value={transferForm.toAccountId}
               onChange={(e) => setTransferForm({ ...transferForm, toAccountId: e.target.value })}
               options={[
                 { value: '', label: 'Select account' },
-                ...accounts
+                ...(transferForm.type === 'Debt Repayment' ? allDebtAccounts : accounts)
                   .filter(acc => acc.id !== transferForm.fromAccountId)
                   .map(acc => ({
                     value: acc.id,
-                    label: `${acc.bank_name || acc.bankName} (${formatCurrency(acc.balance, acc.currency)})`
+                    label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(Math.abs(acc.balance), acc.currency || 'INR')}`
                   }))
               ]}
             />
           )}
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
           <Input
             label="Amount"
             type="number"
@@ -588,18 +1756,8 @@ export default function BankAccountsManager() {
             onChange={(e) => setTransferForm({ ...transferForm, amount: e.target.value })}
             placeholder="0.00"
             step="0.01"
-            required
           />
           
-          <Select
-            label="Currency"
-            value={transferForm.currency}
-            onChange={(e) => setTransferForm({ ...transferForm, currency: e.target.value })}
-            options={CURRENCIES.map(c => ({ value: c.code, label: `${c.name} (${c.symbol})` }))}
-          />
-        </div>
-        
-        <div className="mt-4">
           <Input
             label="Description"
             value={transferForm.description}
