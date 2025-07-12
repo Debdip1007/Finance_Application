@@ -1582,90 +1582,49 @@ export default function BankAccountsManager() {
             <Input
               label="Description"
               value={internationalTransferForm.description}
-                         {/* Percentage Markup Calculation */}
-                         <div className="bg-white border border-gray-200 rounded-lg p-3">
-                           <h5 className="font-medium text-gray-800 mb-2">1. Percentage Markup Calculation</h5>
-                           <div className="space-y-1 text-sm font-mono">
-                             <div className="flex justify-between">
-                               <span className="text-gray-600">Base Rate:</span>
-                               <span className="font-medium">1 {fromAccount.currency} = {baseRate.toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                             <div className="flex justify-between">
-                               <span className="text-gray-600">Markup ({internationalForm.exchangeRateMarkup}%):</span>
-                               <span className="font-medium text-orange-600">+{markupAmount.toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                             <div className="flex justify-between border-t pt-1">
-                               <span className="text-gray-600 font-medium">Final Rate:</span>
-                               <span className="font-medium text-green-600">1 {fromAccount.currency} = {finalRate.toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                           </div>
-                         </div>
+              onChange={(e) => setInternationalTransferForm({ 
+                ...internationalTransferForm, 
+                description: e.target.value 
+              })}
+              placeholder="Optional transfer description"
+            />
+          </div>
 
-                         {/* Flat Rate Markup Calculation */}
-                         <div className="bg-white border border-gray-200 rounded-lg p-3">
-                           <h5 className="font-medium text-gray-800 mb-2">2. Flat Rate Markup Calculation</h5>
-                           <div className="space-y-1 text-sm font-mono">
-                             <div className="flex justify-between">
-                               <span className="text-gray-600">Base Rate:</span>
-                               <span className="font-medium">1 {fromAccount.currency} = {baseRate.toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                             <div className="flex justify-between">
-                               <span className="text-gray-600">Markup:</span>
-                               <span className="font-medium text-orange-600">+{parseFloat(internationalForm.exchangeRateMarkup || '0').toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                             <div className="flex justify-between border-t pt-1">
-                               <span className="text-gray-600 font-medium">Final Rate:</span>
-                               <span className="font-medium text-green-600">1 {fromAccount.currency} = {(baseRate + parseFloat(internationalForm.exchangeRateMarkup || '0')).toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                           </div>
-                         </div>
-
-                         {/* Currently Applied Rate */}
-                         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                           <h5 className="font-medium text-green-800 mb-2">Currently Applied Rate (Percentage Method)</h5>
-                           <div className="text-sm font-mono">
-                             <div className="flex justify-between">
-                               <span className="text-green-700">Active Rate:</span>
-                               <span className="font-bold text-green-800">1 {fromAccount.currency} = {finalRate.toFixed(2)} {toAccount.currency}</span>
-                             </div>
-                           </div>
-                         </div>
-                        </div>
-                        {internationalForm.exchangeRateMarkup > 0 && (
-                          <>
-                            <div className="flex justify-between text-orange-600">
-                              <span>Rate Markup ({internationalForm.exchangeRateMarkup}%):</span>
-                              <span className="font-mono">+{(exchangeRate * (internationalForm.exchangeRateMarkup / 100)).toFixed(2)} {toAccount.currency}</span>
-                            </div>
-                            <div className="flex justify-between font-medium text-blue-600">
-                              <span>Final Exchange Rate:</span>
-                              <span className="font-mono">1 {fromAccount.currency} = {finalExchangeRate.toFixed(2)} {toAccount.currency}</span>
-                            </div>
-                          </>
-                        )}
+          {/* Exchange Rate Section */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h4 className="font-medium text-gray-900 mb-3">Exchange Rate Settings</h4>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <input
+                    type="checkbox"
+                    id="useManualRate"
+                    checked={internationalTransferForm.useManualRate}
+                    onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, useManualRate: e.target.checked })}
                     className="rounded border-gray-300"
                   />
-                          <span className="font-mono">{formatCurrency(parseFloat(internationalForm.amount), fromAccount.currency)}</span>
+                  <label htmlFor="useManualRate" className="text-sm font-medium text-gray-700">
                     Use Manual Exchange Rate
                   </label>
                 </div>
 
-                            <span className="font-mono">-{formatCurrency(internationalForm.flatTransferFee, fromAccount.currency)}</span>
+                {internationalTransferForm.useManualRate ? (
                   <Input
                     label={`Manual Rate (1 ${getSourceAccount()?.currency} = ? ${getDestinationAccount()?.currency})`}
                     type="number"
                     value={internationalTransferForm.manualExchangeRate}
-                          <span className="font-mono">{formatCurrency(convertedAmount, toAccount.currency)}</span>
+                    onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, manualExchangeRate: e.target.value })}
                     placeholder="0.0000"
                     step="0.0001"
                   />
                 ) : (
-                            <span className="font-mono">{internationalForm.manualSettlementAdjustment > 0 ? '+' : ''}{formatCurrency(internationalForm.manualSettlementAdjustment, toAccount.currency)}</span>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Current Exchange Rate</label>
                     <div className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900">
                       {currentExchangeRate ? (
                         `1 ${getSourceAccount()?.currency} = ${currentExchangeRate.toFixed(4)} ${getDestinationAccount()?.currency}`
-                          <span className="font-mono text-green-600">{formatCurrency(finalDestinationAmount, toAccount.currency)}</span>
+                      ) : (
                         'Calculating...'
                       )}
                     </div>
@@ -1683,7 +1642,7 @@ export default function BankAccountsManager() {
                 helpText="Additional percentage markup over base rate (simulates bank fees)"
               />
             </div>
-          )}
+          </div>
 
           {/* Transfer Costs Section */}
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
