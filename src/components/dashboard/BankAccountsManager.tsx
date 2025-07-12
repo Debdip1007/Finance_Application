@@ -1582,26 +1582,54 @@ export default function BankAccountsManager() {
             <Input
               label="Description"
               value={internationalTransferForm.description}
-              onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, description: e.target.value })}
-              placeholder="Optional description"
-            />
-          </div>
+                         {/* Percentage Markup Calculation */}
+                         <div className="bg-white border border-gray-200 rounded-lg p-3">
+                           <h5 className="font-medium text-gray-800 mb-2">1. Percentage Markup Calculation</h5>
+                           <div className="space-y-1 text-sm font-mono">
+                             <div className="flex justify-between">
+                               <span className="text-gray-600">Base Rate:</span>
+                               <span className="font-medium">1 {fromAccount.currency} = {baseRate.toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                             <div className="flex justify-between">
+                               <span className="text-gray-600">Markup ({internationalForm.exchangeRateMarkup}%):</span>
+                               <span className="font-medium text-orange-600">+{markupAmount.toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                             <div className="flex justify-between border-t pt-1">
+                               <span className="text-gray-600 font-medium">Final Rate:</span>
+                               <span className="font-medium text-green-600">1 {fromAccount.currency} = {finalRate.toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                           </div>
+                         </div>
 
-          {/* Exchange Rate Section */}
-          {getSourceAccount() && getDestinationAccount() && getSourceAccount()?.currency !== getDestinationAccount()?.currency && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Exchange Rate Information</h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="useManualRate"
-                    checked={internationalTransferForm.useManualRate}
-                    onChange={(e) => setInternationalTransferForm({ ...internationalTransferForm, useManualRate: e.target.checked })}
-                        <div className="flex justify-between">
-                          <span>Base Exchange Rate:</span>
-                          <span className="font-mono">1 {fromAccount.currency} = {exchangeRate.toFixed(2)} {toAccount.currency}</span>
+                         {/* Flat Rate Markup Calculation */}
+                         <div className="bg-white border border-gray-200 rounded-lg p-3">
+                           <h5 className="font-medium text-gray-800 mb-2">2. Flat Rate Markup Calculation</h5>
+                           <div className="space-y-1 text-sm font-mono">
+                             <div className="flex justify-between">
+                               <span className="text-gray-600">Base Rate:</span>
+                               <span className="font-medium">1 {fromAccount.currency} = {baseRate.toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                             <div className="flex justify-between">
+                               <span className="text-gray-600">Markup:</span>
+                               <span className="font-medium text-orange-600">+{parseFloat(internationalForm.exchangeRateMarkup || '0').toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                             <div className="flex justify-between border-t pt-1">
+                               <span className="text-gray-600 font-medium">Final Rate:</span>
+                               <span className="font-medium text-green-600">1 {fromAccount.currency} = {(baseRate + parseFloat(internationalForm.exchangeRateMarkup || '0')).toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                           </div>
+                         </div>
+
+                         {/* Currently Applied Rate */}
+                         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                           <h5 className="font-medium text-green-800 mb-2">Currently Applied Rate (Percentage Method)</h5>
+                           <div className="text-sm font-mono">
+                             <div className="flex justify-between">
+                               <span className="text-green-700">Active Rate:</span>
+                               <span className="font-bold text-green-800">1 {fromAccount.currency} = {finalRate.toFixed(2)} {toAccount.currency}</span>
+                             </div>
+                           </div>
+                         </div>
                         </div>
                         {internationalForm.exchangeRateMarkup > 0 && (
                           <>
