@@ -9,7 +9,7 @@ import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { Modal } from '../ui/Modal';
 import { Table } from '../ui/Table';
-import { CurrencyDisplay } from '../ui/CurrencyDisplay';
+import CurrencyDisplay from '../ui/CurrencyDisplay';
 import { Plus, Edit2, Trash2, ArrowRightLeft, CreditCard, Globe } from 'lucide-react';
 import { CURRENCIES } from '../../lib/currencies';
 
