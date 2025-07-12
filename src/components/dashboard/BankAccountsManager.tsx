@@ -467,7 +467,23 @@ export default function BankAccountsManager() {
       }
 
       const fromAccount = accounts.find(acc => acc.id === transferForm.fromAccountId);
-      const toAccount = transferForm.toAccountId ? accounts.find(acc => acc.id === transferForm.toAccountId) : null;
+      
+      // Handle both regular accounts and loan accounts
+      let toAccount = null;
+      let isLoanRepayment = false;
+      let targetLoan = null;
+      
+      if (transferForm.toAccountId) {
+        if (transferForm.toAccountId.startsWith('loan-')) {
+          // This is a loan repayment
+          const loanId = transferForm.toAccountId.replace('loan-', '');
+          targetLoan = loans.find(loan => loan.id === loanId);
+          isLoanRepayment = true;
+        } else {
+          // This is a regular account
+          toAccount = accounts.find(acc => acc.id === transferForm.toAccountId);
+        }
+      }
 
       if (!fromAccount) {
         alert('Please select a source account');
@@ -494,7 +510,64 @@ export default function BankAccountsManager() {
       if (fromError) throw fromError;
 
       // If transferring to another account (not external)
-      if (toAccount && (transferForm.type === 'Self' || transferForm.type === 'Debt Repayment')) {
+      if ((toAccount || isLoanRepayment) && (transferForm.type === 'Self' || transferForm.type === 'Debt Repayment')) {
+        if (isLoanRepayment && targetLoan) {
+          // Handle loan repayment
+          const newBalance = Math.max(0, targetLoan.remaining_balance - amount);
+          const isFullyPaid = newBalance === 0;
+
+          // Update loan balance
+          const { error: loanError } = await supabase
+            .from('loans')
+            .update({ 
+              remaining_balance: newBalance,
+              status: isFullyPaid ? 'Closed' : 'Active'
+            })
+            .eq('id', targetLoan.id)
+            .eq('user_id', user?.id);
+          
+          if (loanError) throw loanError;
+
+          // Add repayment record
+          const { error: repaymentError } = await supabase
+            .from('loan_repayments')
+            .insert([{
+              loan_id: targetLoan.id,
+              payment_amount: amount,
+              payment_date: new Date().toISOString().split('T')[0],
+              principal_amount: amount, // Simplified - could be split between principal and interest
+              interest_amount: 0,
+              notes: `Transfer repayment for ${targetLoan.lender_name}`,
+              user_id: user?.id,
+            }]);
+          
+          if (repaymentError) throw repaymentError;
+
+          // Add as expense
+          const { error: expenseError } = await supabase
+            .from('expenses')
+            .insert([{
+              date: new Date().toISOString().split('T')[0],
+              category: 'Loan Repayment',
+              description: `Transfer repayment to ${targetLoan.lender_name}`,
+              amount: amount,
+              currency: 'INR',
+              type: 'Mandatory',
+              account_id: targetLoan.linked_account_id,
+              user_id: user?.id,
+            }]);
+          
+          if (expenseError) throw expenseError;
+
+          // If fully paid, update loan income settlement status
+          if (isFullyPaid) {
+            await supabase
+              .from('incomes')
+              .update({ settlement_status: 'Settled' })
+              .eq('linked_loan_id', targetLoan.id)
+              .eq('user_id', user?.id);
+          }
+        } else if (toAccount) {
         const toConversion = await currencyConverter.convertAmount(
           amount,
           'INR',
@@ -511,6 +584,7 @@ export default function BankAccountsManager() {
           .eq('user_id', user?.id);
         
         if (toError) throw toError;
+        }
       }
 
       // Record the transfer
@@ -518,11 +592,13 @@ export default function BankAccountsManager() {
         .from('transfers')
         .insert([{
           from_account_id: fromAccount.id,
-          to_account_id: toAccount?.id || null,
+          to_account_id: isLoanRepayment ? null : (toAccount?.id || null),
           amount,
           currency: 'INR',
           type: transferForm.type,
-          description: transferForm.description || null,
+          description: isLoanRepayment 
+            ? `Loan repayment to ${targetLoan?.lender_name}` 
+            : (transferForm.description || null),
           date: new Date().toISOString().split('T')[0],
           user_id: user?.id,
         }])
@@ -548,7 +624,7 @@ export default function BankAccountsManager() {
       }
 
       // Handle debt repayment to credit cards
-      if (transferForm.type === 'Debt Repayment' && toAccount) {
+      if (transferForm.type === 'Debt Repayment' && toAccount && !isLoanRepayment) {
         const accountType = toAccount.account_type || toAccount.accountType;
         if (accountType === 'Credit Card') {
           // Mark related unpaid expenses as paid
@@ -570,9 +646,12 @@ export default function BankAccountsManager() {
       }
 
       await loadAccounts();
+      await loadLoans();
       setShowTransferModal(false);
       resetTransferForm();
-      alert('Transfer completed successfully!');
+      alert(isLoanRepayment 
+        ? `Loan repayment completed successfully! ${targetLoan && targetLoan.remaining_balance - amount <= 0 ? 'Loan fully paid!' : ''}` 
+        : 'Transfer completed successfully!');
     } catch (error) {
       console.error('Error processing transfer:', error);
       alert('Error processing transfer. Please try again.');
@@ -815,6 +894,20 @@ export default function BankAccountsManager() {
   const debtAccounts = accounts.filter(acc => 
     ['Credit Card', 'Loan'].includes(acc.account_type || acc.accountType || '')
   );
+
+  // Create virtual debt accounts for active loans
+  const loanDebtAccounts = loans.map(loan => ({
+    id: `loan-${loan.id}`,
+    bank_name: loan.lender_name,
+    account_type: 'Loan',
+    balance: -loan.remaining_balance, // Negative to show as debt
+    currency: 'INR',
+    isLoanAccount: true,
+    loanId: loan.id,
+    loanData: loan
+  }));
+
+  const allDebtAccounts = [...debtAccounts, ...loanDebtAccounts];
 
   return (
     <div className="space-y-6">
@@ -1152,11 +1245,11 @@ export default function BankAccountsManager() {
               onChange={(e) => setTransferForm({ ...transferForm, toAccountId: e.target.value })}
               options={[
                 { value: '', label: 'Select account' },
-                ...(transferForm.type === 'Debt Repayment' ? debtAccounts : accounts)
+                ...(transferForm.type === 'Debt Repayment' ? allDebtAccounts : accounts)
                   .filter(acc => acc.id !== transferForm.fromAccountId)
                   .map(acc => ({
                     value: acc.id,
-                    label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(acc.balance, acc.currency)}`
+                    label: `${acc.bank_name || acc.bankName} (${acc.account_type || acc.accountType}) - ${formatCurrency(Math.abs(acc.balance), acc.currency || 'INR')}`
                   }))
               ]}
             />
