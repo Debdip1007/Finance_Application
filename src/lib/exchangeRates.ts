@@ -6,19 +6,6 @@ const DEFAULT_BASE_CURRENCY = 'INR';
 
 export async function fetchExchangeRates(baseCurrency: string = 'EUR'): Promise<Record<string, number> | null> {
   try {
-    // Check for cached rates first
-    const { data: cachedRates } = await supabase
-      .from('exchange_rates')
-      .select('*')
-      .eq('base_currency', baseCurrency)
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Last 24 hours
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (cachedRates && cachedRates.length > 0) {
-      return cachedRates[0].rates;
-    }
-
     // Fetch new rates
     const response = await fetch(`${EXCHANGE_API_URL}?from=${baseCurrency}`);
     if (!response.ok) {
@@ -27,17 +14,6 @@ export async function fetchExchangeRates(baseCurrency: string = 'EUR'): Promise<
 
     const data = await response.json();
     const rates = { ...data.rates, [baseCurrency]: 1.0 };
-
-    // Cache the rates
-    await supabase
-      .from('exchange_rates')
-      .upsert({
-        base_currency: baseCurrency,
-        rates,
-        fetch_date: new Date().toISOString(),
-      }, {
-        onConflict: 'base_currency'
-      });
 
     return rates;
   } catch (error) {
