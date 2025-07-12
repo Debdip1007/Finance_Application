@@ -757,10 +757,10 @@ export default function BankAccountsManager() {
         alert('Please select both source and destination accounts');
         return;
       }
-      const newExchangeRate = exchangeRate + fixedMarkupFee; 
+
       // Calculate amounts in different currencies
       const sourceAmount = amount; // Amount entered in source currency
-      const convertedAmount = sourceAmount * newExchangeRate; // Base converted amount
+      const convertedAmount = sourceAmount * exchangeRate; // Base converted amount
       const percentageMarkupAmount = convertedAmount * percentageMarkup; // Percentage markup in destination currency
       const totalDestinationAmount = convertedAmount + percentageMarkupAmount + fixedMarkupFee + makeupAmount; // Total in destination currency
 
@@ -771,10 +771,10 @@ export default function BankAccountsManager() {
       if (extraFeeAmount > 0) {
         if (internationalTransferForm.extraFeeCurrency === 'source') {
           extraFeeInSourceCurrency = extraFeeAmount;
-          extraFeeInDestinationCurrency = extraFeeAmount * newExchangeRate;
+          extraFeeInDestinationCurrency = extraFeeAmount * exchangeRate;
         } else {
           extraFeeInDestinationCurrency = extraFeeAmount;
-          extraFeeInSourceCurrency = extraFeeAmount / newExchangeRate;
+          extraFeeInSourceCurrency = extraFeeAmount / exchangeRate;
         }
       }
 
@@ -802,7 +802,7 @@ export default function BankAccountsManager() {
       if (toError) throw toError;
 
       // Record the international transfer with detailed breakdown
-      const transferDescription = `International transfer: ${formatCurrency(sourceAmount, fromAccount.currency)} → ${formatCurrency(totalDestinationAmount, toAccount.currency)} (Rate: ${newExchangeRate})`;
+      const transferDescription = `International transfer: ${formatCurrency(sourceAmount, fromAccount.currency)} → ${formatCurrency(totalDestinationAmount, toAccount.currency)} (Rate: ${exchangeRate})`;
       
       const { data: transferData, error: transferError } = await supabase
         .from('transfers')
@@ -836,7 +836,7 @@ export default function BankAccountsManager() {
         }]);
 
       // Record fees as expenses if they exist
-      const totalFees = percentageMarkupAmount + fixedMarkupFee*sourceAmount + extraFeeInDestinationCurrency;
+      const totalFees = percentageMarkupAmount + fixedMarkupFee + extraFeeInDestinationCurrency;
       if (totalFees > 0) {
         await supabase
           .from('expenses')
