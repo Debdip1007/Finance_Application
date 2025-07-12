@@ -39,6 +39,10 @@ interface TransferFormData {
   amount: string;
   description: string;
   type: 'Self' | 'External' | 'Cash Withdrawal' | 'Debt Repayment';
+  overheadCost: string;
+  overheadType: 'flat' | 'percentage';
+  exchangeFee: string;
+  manualAdjustment: string;
 }
 
 interface LoanFormData {
@@ -94,6 +98,10 @@ export default function BankAccountsManager() {
     amount: '',
     description: '',
     type: 'Self',
+    overheadCost: '0',
+    overheadType: 'flat',
+    exchangeFee: '0',
+    manualAdjustment: '0',
   });
 
   const [loanForm, setLoanForm] = useState<LoanFormData>({
@@ -114,6 +122,22 @@ export default function BankAccountsManager() {
       loadLoans();
     }
   }, [user]);
+
+  // Check if transfer involves international accounts
+  const isInternationalTransfer = () => {
+    const fromAccount = accounts.find(acc => acc.id === transferForm.fromAccountId);
+    const toAccount = accounts.find(acc => acc.id === transferForm.toAccountId);
+    
+    if (!fromAccount) return false;
+    
+    // Check if from account currency differs from app default
+    const fromAccountIsInternational = fromAccount.currency !== 'INR';
+    
+    // Check if to account exists and its currency differs from app default
+    const toAccountIsInternational = toAccount && toAccount.currency !== 'INR';
+    
+    return fromAccountIsInternational || toAccountIsInternational;
+  };
 
   const loadAccounts = async () => {
     setLoading(true);
@@ -468,6 +492,21 @@ export default function BankAccountsManager() {
         return;
       }
 
+      // Calculate additional costs for international transfers
+      const overheadCost = parseFloat(transferForm.overheadCost) || 0;
+      const exchangeFee = parseFloat(transferForm.exchangeFee) || 0;
+      const manualAdjustment = parseFloat(transferForm.manualAdjustment) || 0;
+      
+      let totalOverheadCost = 0;
+      if (isInternationalTransfer()) {
+        if (transferForm.overheadType === 'percentage') {
+          totalOverheadCost = (amount * overheadCost) / 100;
+        } else {
+          totalOverheadCost = overheadCost;
+        }
+        totalOverheadCost += exchangeFee;
+      }
+
       const fromAccount = accounts.find(acc => acc.id === transferForm.fromAccountId);
       
       // Handle both regular accounts and loan accounts
@@ -501,8 +540,13 @@ export default function BankAccountsManager() {
       
       const amountInFromCurrency = fromConversion ? fromConversion.convertedAmount : amount;
       
+      // Calculate total deduction from source account (including overhead costs)
+      const totalDeductionFromSource = amountInFromCurrency + (isInternationalTransfer() ? 
+        await currencyConverter.convertAmount(totalOverheadCost, 'INR', fromAccount.currency).then(conv => conv?.convertedAmount || totalOverheadCost) : 
+        0);
+      
       // Update source account balance
-      const newFromBalance = fromAccount.balance - amountInFromCurrency;
+      const newFromBalance = fromAccount.balance - totalDeductionFromSource;
       const { error: fromError } = await supabase
         .from('bank_accounts')
         .update({ balance: newFromBalance })
@@ -578,7 +622,13 @@ export default function BankAccountsManager() {
           toAccount.currency
         );
         
-        const amountInToCurrency = toConversion ? toConversion.convertedAmount : amount;
+        let amountInToCurrency = toConversion ? toConversion.convertedAmount : amount;
+        
+        // Apply manual adjustment for international transfers
+        if (isInternationalTransfer() && manualAdjustment !== 0) {
+          amountInToCurrency += manualAdjustment;
+        }
+        
         const newToBalance = toAccount.balance + amountInToCurrency;
         
         const { error: toError } = await supabase
@@ -589,6 +639,26 @@ export default function BankAccountsManager() {
         
         if (toError) throw toError;
         }
+      }
+
+      // Record overhead costs as separate expense if international transfer
+      if (isInternationalTransfer() && totalOverheadCost > 0) {
+        const { error: overheadExpenseError } = await supabase
+          .from('expenses')
+          .insert([{
+            date: new Date().toISOString().split('T')[0],
+            category: 'Transfer Fees',
+            description: `International transfer fees - Overhead: ${formatCurrency(overheadCost, 'INR')} (${transferForm.overheadType}), Exchange fee: ${formatCurrency(exchangeFee, 'INR')}`,
+            amount: totalOverheadCost,
+            currency: 'INR',
+            type: 'Need',
+            account_id: fromAccount.id,
+            payment_status: 'Paid',
+            payment_date: new Date().toISOString().split('T')[0],
+            user_id: user?.id,
+          }]);
+        
+        if (overheadExpenseError) throw overheadExpenseError;
       }
 
       // Record the transfer
@@ -698,6 +768,10 @@ export default function BankAccountsManager() {
       amount: '',
       description: '',
       type: 'Self',
+      overheadCost: '0',
+      overheadType: 'flat',
+      exchangeFee: '0',
+      manualAdjustment: '0',
     });
   };
 
@@ -1274,6 +1348,67 @@ export default function BankAccountsManager() {
             onChange={(e) => setTransferForm({ ...transferForm, description: e.target.value })}
             placeholder="Optional description"
           />
+          
+          {isInternationalTransfer() && (
+            <>
+              <div className="col-span-2 mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 className="font-medium text-blue-900 mb-3 flex items-center">
+                  <span className="mr-2">🌍</span>
+                  International Transfer Settings
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex gap-2">
+                    <Input
+                      label="Transfer Overhead Cost"
+                      type="number"
+                      value={transferForm.overheadCost}
+                      onChange={(e) => setTransferForm({ ...transferForm, overheadCost: e.target.value })}
+                      placeholder="0.00"
+                      step="0.01"
+                    />
+                    <Select
+                      label="Type"
+                      value={transferForm.overheadType}
+                      onChange={(e) => setTransferForm({ ...transferForm, overheadType: e.target.value as 'flat' | 'percentage' })}
+                      options={[
+                        { value: 'flat', label: 'Flat Fee' },
+                        { value: 'percentage', label: 'Percentage' },
+                      ]}
+                      className="w-32"
+                    />
+                  </div>
+                  
+                  <Input
+                    label="Currency Exchange Fee"
+                    type="number"
+                    value={transferForm.exchangeFee}
+                    onChange={(e) => setTransferForm({ ...transferForm, exchangeFee: e.target.value })}
+                    placeholder="0.00"
+                    step="0.01"
+                  />
+                  
+                  <Input
+                    label="Manual Settlement Adjustment"
+                    type="number"
+                    value={transferForm.manualAdjustment}
+                    onChange={(e) => setTransferForm({ ...transferForm, manualAdjustment: e.target.value })}
+                    placeholder="0.00"
+                    step="0.01"
+                    helpText="Adjustment in destination account's currency"
+                  />
+                </div>
+                
+                <div className="mt-3 text-sm text-blue-700">
+                  <p><strong>Note:</strong> Additional fees will be deducted from the source account and recorded as separate expenses.</p>
+                  {transferForm.overheadType === 'percentage' && parseFloat(transferForm.overheadCost) > 0 && (
+                    <p className="mt-1">
+                      Overhead cost: {((parseFloat(transferForm.amount) || 0) * (parseFloat(transferForm.overheadCost) || 0) / 100).toFixed(2)} INR
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
         
         <div className="flex justify-end gap-3 mt-6">
