@@ -1653,6 +1653,7 @@ export default function BankAccountsManager() {
                     className="rounded border-gray-300"
                   />
                           <span className="font-mono">{formatCurrency(parseFloat(internationalForm.amount), fromAccount.currency)}</span>
+                  <div>
                     Use Manual Exchange Rate
                   </label>
                 </div>
