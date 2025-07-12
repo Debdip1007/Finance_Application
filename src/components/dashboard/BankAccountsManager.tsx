@@ -419,6 +419,8 @@ export default function BankAccountsManager() {
           currency: 'INR',
           type: 'Mandatory',
           account_id: loan.linked_account_id,
+          payment_status: 'Paid',
+          payment_date: new Date().toISOString().split('T')[0],
           user_id: user?.id,
         }]);
       
@@ -554,6 +556,8 @@ export default function BankAccountsManager() {
               currency: 'INR',
               type: 'Mandatory',
               account_id: targetLoan.linked_account_id,
+              payment_status: 'Paid',
+              payment_date: new Date().toISOString().split('T')[0],
               user_id: user?.id,
             }]);
           
