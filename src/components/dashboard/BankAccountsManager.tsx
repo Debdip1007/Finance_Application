@@ -5,7 +5,7 @@ import { useExchangeRates } from '../../hooks/useExchangeRates';
 import { useCurrencySettings } from '../../hooks/useCurrencySettings';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
-import { Input } from '../ui/Input';
+import Input from '../ui/Input';
 import { Select } from '../ui/Select';
 import { Modal } from '../ui/Modal';
 import { Table } from '../ui/Table';
